@@ -1,0 +1,7 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/orchestration
+    username: orchestration
+    password: devpassword
+  flyway:
+    enabled: true    # mặc định đã true nếu có flyway-core trên classpath, ghi rõ cho dễ đọc
