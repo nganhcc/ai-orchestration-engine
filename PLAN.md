@@ -128,20 +128,3 @@ Nếu quỹ thời gian hạn chế, dừng ở bất cứ đâu trong danh sác
 
 ---
 
-## Checklist tối giản nếu chỉ có 4–5 tuần thay vì 8
-
-Nếu deadline gấp hơn dự kiến, đây là "lõi cứng" đủ để có một câu chuyện phỏng vấn mạnh mà không cần Kafka/Spark/DAG phức tạp:
-
-- [ ] Raft 3-node, election + log replication (Phase 1 + 3)
-- [ ] Epoch/fencing, demo network partition không kill (Phase 4)
-- [ ] Orchestrator/worker single pipeline (không cần DAG nhiều bước, 1 step cũng được), dedup, outbox (Phase 5)
-- [ ] Resume sau crash, đo % step rerun = 0%
-- [ ] Chaos test + README
-
-Đây vẫn là một dự án hệ thống phân tán nghiêm túc, nhỏ hơn phạm vi đầy đủ của đặc tả kỹ thuật, nhưng correctness và độ sâu không giảm.
-
----
-
-## Bước tiếp theo
-
-Bắt đầu từ Phase 0 + 1.1/1.2 (data model + hàm thuần cho Raft) là hợp lý nhất — đây là phần vừa nền tảng vừa test được độc lập sớm nhất.
