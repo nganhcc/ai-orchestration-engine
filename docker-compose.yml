@@ -20,5 +20,71 @@ services:
     ports:
       - "6379:6379"
 
+  orchestrator-a:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    environment:
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
+      SPRING_DATASOURCE_USERNAME: orchestration
+      SPRING_DATASOURCE_PASSWORD: devpassword
+      SPRING_DATA_REDIS_HOST: redis
+      RAFT_NODE_ID: orchestrator-a
+      RAFT_PORT: 7000
+      RAFT_BIND_HOST: 0.0.0.0
+      RAFT_PEERS: orchestrator-b=orchestrator-b:7000,orchestrator-c=orchestrator-c:7000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "7001:7000"
+
+  orchestrator-b:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    environment:
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
+      SPRING_DATASOURCE_USERNAME: orchestration
+      SPRING_DATASOURCE_PASSWORD: devpassword
+      SPRING_DATA_REDIS_HOST: redis
+      RAFT_NODE_ID: orchestrator-b
+      RAFT_PORT: 7000
+      RAFT_BIND_HOST: 0.0.0.0
+      RAFT_PEERS: orchestrator-a=orchestrator-a:7000,orchestrator-c=orchestrator-c:7000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "7002:7000"
+
+  orchestrator-c:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    environment:
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
+      SPRING_DATASOURCE_USERNAME: orchestration
+      SPRING_DATASOURCE_PASSWORD: devpassword
+      SPRING_DATA_REDIS_HOST: redis
+      RAFT_NODE_ID: orchestrator-c
+      RAFT_PORT: 7000
+      RAFT_BIND_HOST: 0.0.0.0
+      RAFT_PEERS: orchestrator-a=orchestrator-a:7000,orchestrator-b=orchestrator-b:7000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "7003:7000"
+
 volumes:
   pgdata:
