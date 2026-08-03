@@ -206,6 +206,7 @@ Frame format (length-prefixed, big-endian):
 - `messageType`: `0x01=ASSIGN_STEP`, `0x02=STEP_RESULT`, `0x03=HEARTBEAT`, `0x04=ACK`, `0x05=STALE_LEADER_REJECT`
 - `epoch` (8 bytes): fencing token — worker so với `highestEpochSeen`, từ chối nếu cũ hơn.
 - `traceId` (đặt trong payload field đầu tiên của mọi message type): 16 bytes UUID, log xuyên suốt orchestrator → worker → LLM call để correlate log theo request.
+- **Quy ước `totalLength` (chốt khi triển khai Phase 2, spec gốc để ngỏ):** `totalLength` = số byte của phần *sau* nó, tức `messageType(1) + requestId(8) + epoch(8) + payload(N)` — **không** tính 4 byte của chính field `totalLength`. Ví dụ `HEARTBEAT` với payload rỗng: `totalLength = 1+8+8+0 = 17`, tổng frame trên wire = `4+17 = 21` byte. Quy ước này ánh xạ trực tiếp sang tham số của `LengthFieldBasedFrameDecoder` (Netty): `lengthFieldOffset=0, lengthFieldLength=4, lengthAdjustment=0, initialBytesToStrip=4`.
 
 ```
 ASSIGN_STEP payload:
@@ -214,6 +215,8 @@ ASSIGN_STEP payload:
   [2 bytes stepIdLen][stepId bytes]
   [4 bytes payloadLen][payload bytes]
 ```
+
+**Giới hạn chống DoS (bổ sung khi triển khai):** `LengthFieldBasedFrameDecoder` phía nhận cấu hình `maxFrameLength = 1MB` — nếu 1 client khai `totalLength` giả mạo (ví dụ cực lớn), decoder ném `TooLongFrameException` thay vì cố cấp phát buffer khổng lồ chờ đủ byte. Ngưỡng 1MB có thể điều chỉnh sau khi biết kích thước payload LLM thực tế lớn nhất ở Phase 5.
 
 ### 5.2 Semantics: exactly-once xử lý step
 

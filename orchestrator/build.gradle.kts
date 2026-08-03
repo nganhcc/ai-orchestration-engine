@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":common"))
     implementation(project(":raft-core"))
     implementation(project(":rpc-transport"))
+    implementation("io.netty:netty-all:4.1.115.Final")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
@@ -20,4 +21,5 @@ dependencies {
     implementation("org.flywaydb:flyway-core:10.15.0")
     implementation("org.flywaydb:flyway-database-postgresql:10.15.0")
     runtimeOnly("org.postgresql:postgresql")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

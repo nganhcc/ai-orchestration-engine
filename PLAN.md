@@ -58,12 +58,46 @@ Chỉ sau khi bước 1.1–1.3 pass test ổn định mới sang Phase 2 (gắn
 
 **Mục tiêu:** frame format ở mục 5.1 của đặc tả kỹ thuật chạy đúng, độc lập với Raft/orchestrator.
 
-1. Viết encoder/decoder cho frame length-prefixed: dùng `LengthFieldBasedFrameDecoder` của Netty cho phần đọc, tự viết `ByteToMessageDecoder`/`MessageToByteEncoder` cho phần parse `messageType/requestId/epoch/payload`.
-2. Viết test round-trip: encode → decode → so sánh object gốc, bao gồm case payload rỗng, payload lớn (test frame length 4 bytes không tràn).
-3. Netty echo server/client đơn giản: gửi `HEARTBEAT`, nhận `ACK`.
-4. Chưa cần epoch check ở bước này — đó là việc của Phase 4. Ở đây chỉ cần transport hoạt động đúng.
+Nguyên tắc giống Phase 1: tách tầng thuần (`FrameCodec`, không phụ thuộc Netty, test bằng `byte[]`/`ByteBuffer`) khỏi tầng Netty (`NettyFrameDecoder`/`Encoder`, chỉ là lớp vỏ mỏng gọi vào tầng thuần). Bug parse offset bắt ở tầng thuần rẻ hơn nhiều so với bắt được khi đã lẫn vào pipeline Netty thật.
 
-**Kiểm tra xong:** 2 process Java riêng biệt (client/server) trao đổi frame qua TCP thật, có test đo round-trip latency thô để dùng làm baseline cho metric sau này.
+### 2.1 Model dữ liệu + codec thuần (không Netty)
+
+- `FrameMessage(messageType, requestId, epoch, payload: byte[])` — record thuần, override `equals`/`hashCode` thủ công vì `record` mặc định so `byte[]` theo reference, không theo nội dung.
+- `AssignStepPayload(traceId, jobId, stepId, payload: byte[])` — cấu trúc lồng riêng cho `messageType=ASSIGN_STEP`, theo đúng layout mục 5.1 của đặc tả.
+- `FrameCodec`: `encodeFrame`/`decodeFrame` (tầng ngoài, gồm cả 4 byte `totalLength`), `decodeBody` (dùng khi 4 byte length đã bị Netty strip sẵn), `encodeAssignStepPayload`/`decodeAssignStepPayload` (tầng trong).
+- Quy ước `totalLength` đã chốt trong đặc tả (mục 5.1, phần bổ sung): không tính 4 byte của chính nó.
+
+### 2.2 Test round-trip tầng thuần — `FrameCodecTest`
+
+Case bắt buộc:
+- Round-trip `HEARTBEAT` payload rỗng và `ASSIGN_STEP` có payload — assert đúng giá trị byte của `totalLength`, không chỉ assert object sau decode bằng object gốc.
+- `jobId`/`stepId` chứa ký tự tiếng Việt — `.getBytes(UTF_8).length` khác `.length()`, dễ lấy nhầm số ký tự làm số byte khi ghi `jobIdLen`.
+- `jobIdLen` gần biên 32768 — `short` có dấu trong Java, đọc sai (thiếu `Short.toUnsignedInt`) sẽ ra số âm và `NegativeArraySizeException`.
+- `jobId`/`stepId` vượt quá 65535 byte → phải throw rõ ràng, không wrap-around âm thầm.
+- Payload lớn (~100KB) → verify không có chỗ nào lỡ dùng kiểu số quá nhỏ cho length.
+- `totalLength` khai man so với số byte thực nhận → throw exception rõ ràng thay vì lỗi mập mờ ở tầng dưới.
+
+### 2.3 Netty codec — lớp vỏ mỏng
+
+- `NettyFrameDecoder extends ByteToMessageDecoder`: nhận `ByteBuf` đã được `LengthFieldBasedFrameDecoder` cắt đúng 1 frame và strip 4 byte length, đọc thành `byte[]`, gọi thẳng `FrameCodec.decodeBody` — không tự parse gì thêm.
+- `NettyFrameEncoder extends MessageToByteEncoder<FrameMessage>`: gọi `FrameCodec.encodeFrame`, ghi kết quả vào `ByteBuf`.
+- Cấu hình `LengthFieldBasedFrameDecoder` trong `ChannelInitializer`: `lengthFieldOffset=0, lengthFieldLength=4, lengthAdjustment=0, initialBytesToStrip=4`, `maxFrameLength=1MB` (chống DoS nếu length bị khai man).
+- Test bằng `EmbeddedChannel` (không mở socket thật) — case bắt buộc: 1 frame đến đủ trong 1 lần; 1 frame bị TCP chia làm 2 gói (verify decoder tự chờ, không đẩy frame dở dang); 2 frame dính liền nhau trong 1 gói (verify tách đúng từng frame).
+
+### 2.4 `RpcHandler` — trạm cuối pipeline, tầng nghiệp vụ
+
+- Nhận `FrameMessage` đã decode xong, `switch` theo `messageType`. Phase 2 chỉ cần xử lý `HEARTBEAT → ACK` (echo lại `requestId`) để chạy demo; `ASSIGN_STEP` chỉ log ra để verify pipeline, chưa gọi `LlmClient` thật (để dành Phase 5).
+- Bắt buộc override `exceptionCaught` — nếu không, lỗi decode payload sẽ bị Netty âm thầm đóng kết nối, khó debug khi test end-to-end.
+
+### 2.5 Echo server/client thật qua TCP
+
+- Ghép `RpcChannelInitializer` (định nghĩa pipeline cho mỗi `Channel` mới) vào `ServerBootstrap`/`Bootstrap` thật.
+- 2 process Java riêng biệt (client/server) trao đổi frame qua TCP thật, gửi `HEARTBEAT` nhận `ACK`.
+- Đo round-trip latency thô (`System.nanoTime()` trước gửi, sau khi nhận `ACK`) — dùng làm baseline so sánh với Kafka transport ở Phase 7.
+
+Chưa cần epoch check ở bước này — đó là việc của Phase 4. Ở đây chỉ cần transport hoạt động đúng.
+
+**Kiểm tra xong:** `FrameCodecTest` + `NettyPipelineTest` (`EmbeddedChannel`) pass, sau đó 2 process Java riêng biệt trao đổi frame qua TCP thật thành công.
 
 ---
 
@@ -128,3 +162,20 @@ Nếu quỹ thời gian hạn chế, dừng ở bất cứ đâu trong danh sác
 
 ---
 
+## Checklist tối giản nếu chỉ có 4–5 tuần thay vì 8
+
+Nếu deadline gấp hơn dự kiến, đây là "lõi cứng" đủ để có một câu chuyện phỏng vấn mạnh mà không cần Kafka/Spark/DAG phức tạp:
+
+- [ ] Raft 3-node, election + log replication (Phase 1 + 3)
+- [ ] Epoch/fencing, demo network partition không kill (Phase 4)
+- [ ] Orchestrator/worker single pipeline (không cần DAG nhiều bước, 1 step cũng được), dedup, outbox (Phase 5)
+- [ ] Resume sau crash, đo % step rerun = 0%
+- [ ] Chaos test + README
+
+Đây vẫn là một dự án hệ thống phân tán nghiêm túc, nhỏ hơn phạm vi đầy đủ của đặc tả kỹ thuật, nhưng correctness và độ sâu không giảm.
+
+---
+
+## Bước tiếp theo
+
+Bắt đầu từ Phase 0 + 1.1/1.2 (data model + hàm thuần cho Raft) là hợp lý nhất — đây là phần vừa nền tảng vừa test được độc lập sớm nhất.
