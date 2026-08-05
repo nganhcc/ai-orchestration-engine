@@ -4,7 +4,7 @@ plugins {
 }
 
 springBoot {
-    mainClass.set("com.nganhcc.orchestration.orchestrator.OrchestratorApplication")
+    mainClass.set("com.nganhcc.orchestration.worker.WorkerApplication")
 }
 
 dependencies {

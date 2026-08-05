@@ -1,3 +1,37 @@
+# Tóm tắt tiến độ — Phase 4 bắt đầu: fencing token / epoch
+
+## 4 — Epoch/fencing cho Raft leader
+
+### Trạng thái hiện tại
+
+- Đã thêm `epoch` vào `RaftState` và cho leader set `epoch = currentTerm` khi thắng election.
+- Raft step-down hiện reset epoch về `0` khi phát hiện term mới hơn hoặc bị leader khác cùng term ép lùi.
+- Test `raft-core` + `orchestrator` đã build xanh sau thay đổi epoch.
+- Snapshot/log compaction vẫn chưa triển khai; Phase 4 hiện đang đi theo nhánh fencing trước như plan đã chốt.
+
+### File đã chạm
+
+**`raft-core/src/main/java/com/nganhcc/orchestration/raftcore/`**
+- `RaftState.java` — thêm `epoch`, `lastSnapshotIndex`, `lastSnapshotTerm`.
+- `RaftEventListener.java` — thêm epoch vào event `leaderElected` và `stepDown`.
+- `RaftMessageHandler.java` — reset epoch khi step-down do term mới hơn.
+- `RaftNode.java` — set epoch khi trở thành leader và log step-down có epoch.
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/raft/`**
+- `LoggingRaftEventListener.java` — log thêm epoch cho leader election và step-down.
+
+### Kiểm tra đã chạy
+
+- `./gradlew :raft-core:test :orchestrator:test` pass.
+- `InJvmClusterDemoTest` và `RaftNettyClusterIntegrationTest` đều xác nhận epoch khớp term của leader.
+
+### Ghi chú
+
+- Snapshot vẫn để cho nhánh tiếp theo của Phase 4 vì hiện chưa có business write path để gắn fencing end-to-end.
+- Trọng tâm tiếp theo là nối epoch này vào luồng write ra ngoài cluster khi có worker/Postgres path.
+
+---
+
 # Tóm tắt tiến độ — Phase 3 đã ghép `raft-core` vào network thật
 
 ## 3 — Ghép `raft-core` vào network thật
