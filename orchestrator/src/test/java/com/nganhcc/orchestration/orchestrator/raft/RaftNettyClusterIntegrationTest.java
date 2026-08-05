@@ -48,6 +48,7 @@ class RaftNettyClusterIntegrationTest {
             Bundle leader = awaitSingleLeader(cluster, Duration.ofSeconds(8));
             long leaderTerm = leader.node().state().currentTerm;
             assertEquals(NodeState.LEADER, leader.node().state().nodeState);
+            assertEquals(leaderTerm, leader.node().state().epoch, "Epoch phải khớp term khi node trở thành leader");
 
             leader.close();
 
@@ -56,6 +57,8 @@ class RaftNettyClusterIntegrationTest {
             Bundle newLeader = awaitSingleLeader(remaining, Duration.ofSeconds(8));
             assertEquals(NodeState.LEADER, newLeader.node().state().nodeState);
             assertTrue(newLeader.node().state().currentTerm > leaderTerm, "Term phải tăng sau khi bầu lại");
+            assertEquals(newLeader.node().state().currentTerm, newLeader.node().state().epoch,
+                "Epoch của leader mới phải khớp term hiện tại");
         } finally {
             closeQuietly(a);
             closeQuietly(b);

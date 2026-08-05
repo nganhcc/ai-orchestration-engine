@@ -117,4 +117,63 @@ public final class FrameCodec {
 
         return new AssignStepPayload(traceId, jobId, stepId, payload);
     }
+
+    // ---------- Tầng trong: StepResultPayload <-> byte[] ----------
+
+    public static byte[] encodeStepResultPayload(StepResultPayload p) {
+        byte[] jobIdBytes = p.jobId().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] stepIdBytes = p.stepId().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        if (jobIdBytes.length > 0xFFFF) {
+            throw new IllegalArgumentException("jobId vượt quá 65535 byte: " + jobIdBytes.length);
+        }
+        if (stepIdBytes.length > 0xFFFF) {
+            throw new IllegalArgumentException("stepId vượt quá 65535 byte: " + stepIdBytes.length);
+        }
+
+        int totalLen = 16                          // traceId
+                + 2 + jobIdBytes.length             // jobIdLen + jobId
+                + 2 + stepIdBytes.length            // stepIdLen + stepId
+                + 4 + p.result().length;           // resultLen + result
+
+        java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(totalLen);
+
+        buf.putLong(p.traceId().getMostSignificantBits());
+        buf.putLong(p.traceId().getLeastSignificantBits());
+
+        buf.putShort((short) jobIdBytes.length);
+        buf.put(jobIdBytes);
+
+        buf.putShort((short) stepIdBytes.length);
+        buf.put(stepIdBytes);
+
+        buf.putInt(p.result().length);
+        buf.put(p.result());
+
+        return buf.array();
+    }
+
+    public static StepResultPayload decodeStepResultPayload(byte[] bytes) {
+        java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(bytes);
+
+        long msb = buf.getLong();
+        long lsb = buf.getLong();
+        java.util.UUID traceId = new java.util.UUID(msb, lsb);
+
+        int jobIdLen = java.lang.Short.toUnsignedInt(buf.getShort());
+        byte[] jobIdBytes = new byte[jobIdLen];
+        buf.get(jobIdBytes);
+        String jobId = new String(jobIdBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+        int stepIdLen = java.lang.Short.toUnsignedInt(buf.getShort());
+        byte[] stepIdBytes = new byte[stepIdLen];
+        buf.get(stepIdBytes);
+        String stepId = new String(stepIdBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+        int resultLen = buf.getInt();
+        byte[] result = new byte[resultLen];
+        buf.get(result);
+
+        return new StepResultPayload(traceId, jobId, stepId, result);
+    }
 }

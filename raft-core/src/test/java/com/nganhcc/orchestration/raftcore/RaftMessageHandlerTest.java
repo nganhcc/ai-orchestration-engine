@@ -29,6 +29,7 @@ class RaftMessageHandlerTest {
     void requestVote_termMoiHonThiCapNhatCurrentTermVaLuiVeFollower() {
         RaftState state = new RaftState("A");
         state.currentTerm = 3;
+        state.epoch = 3;
         state.nodeState = NodeState.CANDIDATE;
         state.votedFor = "A"; // đang tự vote cho chính mình ở term cũ
 
@@ -37,6 +38,7 @@ class RaftMessageHandlerTest {
 
         assertEquals(5, state.currentTerm);
         assertEquals(NodeState.FOLLOWER, state.nodeState);
+        assertEquals(0, state.epoch, "Epoch phải reset khi rớt khỏi leader/candidate do term mới hơn");
     }
 
     @Test
@@ -133,6 +135,7 @@ class RaftMessageHandlerTest {
     void appendEntries_termBangNhauVanPhaiLuiCandidateVeFollower() {
         RaftState state = new RaftState("A");
         state.currentTerm = 5;
+        state.epoch = 5;
         state.nodeState = NodeState.CANDIDATE; // đang tự ứng cử ở đúng term 5
 
         AppendEntriesRequest req = new AppendEntriesRequest(
@@ -142,6 +145,7 @@ class RaftMessageHandlerTest {
 
         assertEquals(NodeState.FOLLOWER, state.nodeState,
             "Term bằng nhau cũng phải lùi về FOLLOWER vì đã có leader thắng cử ở term này");
+        assertEquals(0, state.epoch, "Epoch phải reset khi bị leader khác cùng term ép về follower");
     }
 
     @Test
