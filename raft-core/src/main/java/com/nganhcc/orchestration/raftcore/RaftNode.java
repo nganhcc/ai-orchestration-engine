@@ -65,10 +65,11 @@ public final class RaftNode {
 
     public synchronized RequestVoteResponse onReceiveRequestVote(RequestVoteRequest req) {
         long beforeTerm = state.currentTerm;
+        long beforeEpoch = state.epoch;
         NodeState beforeState = state.nodeState;
         RequestVoteResponse resp = RaftMessageHandler.handleRequestVote(state, req);
         if (req.term() > beforeTerm && beforeState != NodeState.FOLLOWER && state.nodeState == NodeState.FOLLOWER) {
-            eventListener.stepDown(state.selfId, req.candidateId(), beforeTerm, state.currentTerm, "request_vote");
+            notifyStepDown(req.candidateId(), beforeTerm, beforeEpoch, "request_vote", beforeState == NodeState.LEADER);
         }
         if (resp.voteGranted()) {
             // đã "cam kết" với candidate này trong 1 khoảng thời gian -> reset để không
@@ -80,10 +81,11 @@ public final class RaftNode {
 
     public synchronized AppendEntriesResponse onReceiveAppendEntries(AppendEntriesRequest req) {
         long beforeTerm = state.currentTerm;
+        long beforeEpoch = state.epoch;
         NodeState beforeState = state.nodeState;
         AppendEntriesResponse resp = RaftMessageHandler.handleAppendEntries(state, req);
         if (state.nodeState == NodeState.FOLLOWER && beforeState != NodeState.FOLLOWER) {
-            eventListener.stepDown(state.selfId, req.leaderId(), beforeTerm, state.currentTerm, "append_entries");
+            notifyStepDown(req.leaderId(), beforeTerm, beforeEpoch, "append_entries", beforeState == NodeState.LEADER);
         }
         if (resp.success()) {
             // AppendEntries hợp lệ từ 1 leader thật -> chứng tỏ cluster đang có leader,
@@ -165,10 +167,12 @@ public final class RaftNode {
                 );
                 if (resp.term() > state.currentTerm) {
                     long previousTerm = state.currentTerm;
+                    long previousEpoch = state.epoch;
                     state.currentTerm = resp.term();
                     state.votedFor = null;
                     state.nodeState = NodeState.FOLLOWER;
-                    eventListener.stepDown(state.selfId, peerId, previousTerm, state.currentTerm, "higher_term_vote_response");
+                    state.epoch = 0;
+                    notifyStepDown(peerId, previousTerm, previousEpoch, "higher_term_vote_response", false);
                     resetElectionTimer();
                     return;
                 }
@@ -197,12 +201,13 @@ public final class RaftNode {
 
     private void becomeLeader() {
         state.nodeState = NodeState.LEADER;
+        state.epoch = state.currentTerm;
         if (electionTask != null) {
             electionTask.cancel(false); // leader không cần election timer nữa
         }
         long elapsedMs = electionStartedAtNanos == 0L ? -1L : millisSince(electionStartedAtNanos);
         electionStartedAtNanos = 0L;
-        eventListener.leaderElected(state.selfId, state.currentTerm, elapsedMs);
+        eventListener.leaderElected(state.selfId, state.currentTerm, state.epoch, elapsedMs);
         heartbeatTask = scheduler.scheduleAtFixedRate(
             this::sendHeartbeatToAll, 0, 50, TimeUnit.MILLISECONDS);
     }
@@ -253,16 +258,26 @@ public final class RaftNode {
                 );
                 if (resp.term() > state.currentTerm) {
                     long previousTerm = state.currentTerm;
+                    long previousEpoch = state.epoch;
                     state.currentTerm = resp.term();
                     state.votedFor = null;
                     state.nodeState = NodeState.FOLLOWER;
-                    eventListener.stepDown(state.selfId, peerId, previousTerm, state.currentTerm, "higher_term_append_entries_response");
+                    state.epoch = 0;
+                    notifyStepDown(peerId, previousTerm, previousEpoch, "higher_term_append_entries_response", true);
                     if (heartbeatTask != null) heartbeatTask.cancel(false);
                     resetElectionTimer();
                     return;
                 }
             }
         }
+    }
+
+    private void notifyStepDown(String sourceNodeId, long fromTerm, long fromEpoch, String reason, boolean cancelHeartbeat) {
+        if (cancelHeartbeat && heartbeatTask != null) {
+            heartbeatTask.cancel(false);
+            heartbeatTask = null;
+        }
+        eventListener.stepDown(state.selfId, sourceNodeId, fromTerm, fromEpoch, state.currentTerm, reason);
     }
 
     private long millisSince(long startedAtNanos) {

@@ -19,7 +19,7 @@ public interface RaftEventListener {
             long responseTerm
     ) {}
 
-    default void leaderElected(String nodeId, long term, long elapsedMs) {}
+        default void leaderElected(String nodeId, long term, long epoch, long elapsedMs) {}
 
     default void heartbeat(
             String nodeId,
@@ -34,6 +34,7 @@ public interface RaftEventListener {
             String nodeId,
             String sourceNodeId,
             long fromTerm,
+            long fromEpoch,
             long toTerm,
             String reason
     ) {}

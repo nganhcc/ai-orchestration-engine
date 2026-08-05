@@ -24,6 +24,12 @@ class InJvmClusterDemoTest {
             .count();
         assertEquals(1, leaderCount, "Phải có đúng 1 leader");
 
+        RaftNode leader = List.of(a, b, c).stream()
+            .filter(n -> n.state().nodeState == NodeState.LEADER)
+            .findFirst().orElseThrow();
+        assertEquals(leader.state().currentTerm, leader.state().epoch,
+            "Epoch phải khớp term khi node trở thành leader");
+
         a.stop(); b.stop(); c.stop();
     }
 
@@ -63,6 +69,8 @@ class InJvmClusterDemoTest {
             .filter(n -> n.state().nodeState == NodeState.LEADER)
             .findFirst().orElseThrow();
         assertTrue(newLeader.state().currentTerm > oldTerm, "Term phải tăng sau khi bầu lại");
+        assertEquals(newLeader.state().currentTerm, newLeader.state().epoch,
+            "Epoch của leader mới phải khớp term hiện tại");
 
         remaining.forEach(RaftNode::stop);
     }

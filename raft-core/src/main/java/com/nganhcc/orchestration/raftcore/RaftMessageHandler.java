@@ -18,6 +18,7 @@ public final class RaftMessageHandler {
             state.currentTerm = req.term();
             state.votedFor = null;
             state.nodeState = NodeState.FOLLOWER;
+            state.epoch = 0;
         }
 
         // 3. Election restriction (Raft paper §5.4.1): chỉ vote cho candidate có log
@@ -49,8 +50,12 @@ public final class RaftMessageHandler {
         //    Quan trọng: dù term BẰNG currentTerm cũng phải lùi về FOLLOWER, vì 1 candidate
         //    đang tự ứng cử ở cùng term có thể nhận AppendEntries từ 1 leader đã thắng trước đó.
         if (req.term() >= state.currentTerm) {
+            boolean wasFollower = state.nodeState == NodeState.FOLLOWER;
             state.currentTerm = req.term();
             state.nodeState = NodeState.FOLLOWER;
+            if (!wasFollower) {
+                state.epoch = 0;
+            }
         }
 
         // 3. Check log consistency tại prevLogIndex/prevLogTerm
