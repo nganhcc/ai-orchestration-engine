@@ -34,6 +34,8 @@ services:
       RAFT_PORT: 7000
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_PEERS: orchestrator-b=orchestrator-b:7000,orchestrator-c=orchestrator-c:7000
+      ORCHESTRATOR_RPC_PORT: 9000
+      ORCHESTRATOR_RPC_BIND_HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,6 +43,7 @@ services:
         condition: service_started
     ports:
       - "7001:7000"
+      - "9001:9000"
 
   orchestrator-b:
     build:
@@ -56,6 +59,8 @@ services:
       RAFT_PORT: 7000
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_PEERS: orchestrator-a=orchestrator-a:7000,orchestrator-c=orchestrator-c:7000
+      ORCHESTRATOR_RPC_PORT: 9000
+      ORCHESTRATOR_RPC_BIND_HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,6 +68,7 @@ services:
         condition: service_started
     ports:
       - "7002:7000"
+      - "9002:9000"
 
   orchestrator-c:
     build:
@@ -78,6 +84,8 @@ services:
       RAFT_PORT: 7000
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_PEERS: orchestrator-a=orchestrator-a:7000,orchestrator-b=orchestrator-b:7000
+      ORCHESTRATOR_RPC_PORT: 9000
+      ORCHESTRATOR_RPC_BIND_HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,6 +93,25 @@ services:
         condition: service_started
     ports:
       - "7003:7000"
+      - "9003:9000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      # For local Docker desktop, connect to the host-mapped orchestrator RPC port
+      ORCHESTRATOR_HOST: host.docker.internal
+      ORCHESTRATOR_PORT: 9001
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
+      SPRING_DATASOURCE_USERNAME: orchestration
+      SPRING_DATASOURCE_PASSWORD: devpassword
+    depends_on:
+      orchestrator-a:
+        condition: service_started
+    links:
+      - orchestrator-a
 
 volumes:
   pgdata:
