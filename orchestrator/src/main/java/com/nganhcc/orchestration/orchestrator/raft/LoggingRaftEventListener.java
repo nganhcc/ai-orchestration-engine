@@ -33,8 +33,8 @@ final class LoggingRaftEventListener implements RaftEventListener {
     }
 
     @Override
-    public void leaderElected(String nodeId, long term, long elapsedMs) {
-        log.info("raft.event=leader.elected nodeId={} term={} elapsedMs={}", nodeId, term, elapsedMs);
+    public void leaderElected(String nodeId, long term, long epoch, long elapsedMs) {
+        log.info("raft.event=leader.elected nodeId={} term={} epoch={} elapsedMs={}", nodeId, term, epoch, elapsedMs);
     }
 
     @Override
@@ -61,14 +61,16 @@ final class LoggingRaftEventListener implements RaftEventListener {
             String nodeId,
             String sourceNodeId,
             long fromTerm,
+            long fromEpoch,
             long toTerm,
             String reason
     ) {
         log.info(
-                "raft.event=step_down nodeId={} sourceNodeId={} fromTerm={} toTerm={} reason={}",
+                "raft.event=step_down nodeId={} sourceNodeId={} fromTerm={} fromEpoch={} toTerm={} reason={}",
                 nodeId,
                 sourceNodeId,
                 fromTerm,
+                fromEpoch,
                 toTerm,
                 reason);
     }
