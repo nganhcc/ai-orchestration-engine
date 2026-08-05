@@ -11,6 +11,10 @@ import io.netty.channel.SimpleChannelInboundHandler;
  */
 public class RpcHandler extends SimpleChannelInboundHandler<FrameMessage> {
 
+    // Shared across handler instances on a worker process: highest epoch seen from any leader.
+    // Use AtomicLong to update safely across Netty IO threads.
+    private static final java.util.concurrent.atomic.AtomicLong highestEpochSeen = new java.util.concurrent.atomic.AtomicLong(0L);
+
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FrameMessage msg) {
         switch (msg.messageType()) {
@@ -22,19 +26,64 @@ public class RpcHandler extends SimpleChannelInboundHandler<FrameMessage> {
     }
 
     private void handleHeartbeat(ChannelHandlerContext ctx, FrameMessage msg) {
-        // Echo lại đúng requestId để bên gửi match được request/response,
-        // epoch giữ nguyên vì Phase 2 chưa check fencing (để dành Phase 4).
-        FrameMessage ack = new FrameMessage(
-                FrameMessage.ACK, msg.requestId(), msg.epoch(), new byte[0]);
-        ctx.writeAndFlush(ack); // chảy ngược lên NettyFrameEncoder -> socket
+        // Fencing: accept only if msg.epoch >= highestEpochSeen.
+        long incoming = msg.epoch();
+        if (!acceptEpoch(incoming)) {
+            // reply STALE_LEADER_REJECT with current highestEpochSeen
+            FrameMessage reject = new FrameMessage(FrameMessage.STALE_LEADER_REJECT,
+                    msg.requestId(), highestEpochSeen.get(), new byte[0]);
+            ctx.writeAndFlush(reject);
+            return;
+        }
+
+        // Echo back ACK for heartbeat. Accepting the epoch already set highestEpochSeen.
+        FrameMessage ack = new FrameMessage(FrameMessage.ACK, msg.requestId(), incoming, new byte[0]);
+        ctx.writeAndFlush(ack);
     }
 
     private void handleAssignStep(ChannelHandlerContext ctx, FrameMessage msg) {
+        // Fencing: reject if epoch stale before any state mutation / payload parsing
+        long incoming = msg.epoch();
+        if (!acceptEpoch(incoming)) {
+            FrameMessage reject = new FrameMessage(FrameMessage.STALE_LEADER_REJECT,
+                    msg.requestId(), highestEpochSeen.get(), new byte[0]);
+            ctx.writeAndFlush(reject);
+            return;
+        }
+
         // Đến đây mới cần biết cấu trúc lồng bên trong payload -> parse tiếp
         AssignStepPayload payload = FrameCodec.decodeAssignStepPayload(msg.payload());
-        // Phase 2: chỉ log ra để verify pipeline chạy đúng, chưa gọi LlmClient thật (Phase 5)
-        System.out.printf("Nhận ASSIGN_STEP: jobId=%s stepId=%s traceId=%s%n",
-                payload.jobId(), payload.stepId(), payload.traceId());
+        // Phase 2: mock xử lý (thay cho LlmClient) và trả STEP_RESULT về orchestrator
+        System.out.printf("Nhận ASSIGN_STEP: jobId=%s stepId=%s traceId=%s epoch=%d%n",
+            payload.jobId(), payload.stepId(), payload.traceId(), incoming);
+
+        // Mock processing: produce a simple JSON result. In real Phase 5 this calls LlmClient.
+        String resultJson = "{\"status\":\"ok\",\"stepId\":\"" + payload.stepId() + "\"}";
+        byte[] resultBytes = resultJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        // Build STEP_RESULT payload and send back on same channel
+        StepResultPayload resultPayload = new StepResultPayload(payload.traceId(), payload.jobId(), payload.stepId(), resultBytes);
+        byte[] payloadBytes = FrameCodec.encodeStepResultPayload(resultPayload);
+
+        FrameMessage stepResult = new FrameMessage(FrameMessage.STEP_RESULT, msg.requestId(), incoming, payloadBytes);
+        ctx.writeAndFlush(stepResult);
+    }
+
+    private boolean acceptEpoch(long incomingEpoch) {
+        // If incoming < highest seen -> reject. If >=, update highestEpochSeen to incoming (max).
+        long prev;
+        do {
+            prev = highestEpochSeen.get();
+            if (incomingEpoch < prev) return false;
+            if (incomingEpoch == prev) return true; // equal is acceptable
+        } while (!highestEpochSeen.compareAndSet(prev, incomingEpoch));
+        return true;
+    }
+
+    // TEST-HOOK: allow tests to reset or set the highest epoch observed.
+    // Package-private on purpose (tests in same package can call it).
+    static void setHighestEpochForTests(long epoch) {
+        highestEpochSeen.set(epoch);
     }
 
     @Override
