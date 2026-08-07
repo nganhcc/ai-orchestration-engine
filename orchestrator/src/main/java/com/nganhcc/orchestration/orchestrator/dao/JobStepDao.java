@@ -30,9 +30,9 @@ public class JobStepDao {
      * Returns true if row was updated (i.e., caller won the CAS), false if a newer epoch already present.
      */
     public boolean updateStatusIfEpochAtMost(UUID stepId, long epoch, String status, String resultJson) {
-        String sql = "UPDATE job_step SET status = ?, result = ?, leader_epoch = ?, updated_at = now() "
+        String sql = "UPDATE job_step SET status = ?, result = CAST(? AS jsonb), leader_epoch = ?, updated_at = now() "
                 + "WHERE step_id = ? AND leader_epoch <= ?";
-        int rows = updater.update(sql, status, resultJson, epoch, stepId.toString(), epoch);
+        int rows = updater.update(sql, status, resultJson, epoch, stepId, epoch);
         return rows > 0;
     }
 }

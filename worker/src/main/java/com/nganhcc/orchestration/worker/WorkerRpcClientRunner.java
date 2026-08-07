@@ -40,6 +40,20 @@ public class WorkerRpcClientRunner implements CommandLineRunner {
                 ChannelFuture f = b.connect(orchestratorHost, orchestratorPort).sync();
                 Channel ch = f.channel();
                 System.out.println("Worker connected to orchestrator " + orchestratorHost + ":" + orchestratorPort);
+                
+                // --- TEST SIMULATION ---
+                java.util.UUID stepId = java.util.UUID.fromString("11111111-1111-1111-1111-111111111111");
+                String jobId = "00000000-0000-0000-0000-000000000000";
+                com.nganhcc.orchestration.rpctransport.StepResultPayload rp = new com.nganhcc.orchestration.rpctransport.StepResultPayload(
+                    java.util.UUID.randomUUID(), jobId, stepId.toString(), "{\"status\":\"simulated\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                );
+                byte[] rpBytes = com.nganhcc.orchestration.rpctransport.FrameCodec.encodeStepResultPayload(rp);
+                com.nganhcc.orchestration.rpctransport.FrameMessage stepResult = new com.nganhcc.orchestration.rpctransport.FrameMessage(
+                    com.nganhcc.orchestration.rpctransport.FrameMessage.STEP_RESULT, 999L, 1L, rpBytes
+                );
+                ch.writeAndFlush(stepResult);
+                // -----------------------
+
                 ch.closeFuture().sync();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

@@ -29,8 +29,8 @@ public class StepService {
         if (!updated) return false;
 
         // Insert outbox event for cache invalidation / notifications
-        String sql = "INSERT INTO outbox(aggregate_id, event_type, payload, published) VALUES(?, ?, ?::jsonb, false)";
-        jdbc.update(sql, stepId.toString(), "STEP_DONE_NOTIFY", resultJson);
+        String sql = "INSERT INTO outbox(aggregate_id, event_type, payload, published) VALUES(?, ?, CAST(? AS jsonb), false)";
+        jdbc.update(sql, stepId, "STEP_DONE_NOTIFY", resultJson);
         return true;
     }
 }

@@ -1,0 +1,16 @@
+.git
+.gitignore
+.github
+.vscode
+.gradle
+build/
+gradle/
+*.log
+*.md
+.dockerignore
+Dockerfile*
+docker-compose.yml
+.env
+.env.local
+.DS_Store
+node_modules/

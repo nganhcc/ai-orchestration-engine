@@ -10,11 +10,14 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
+import io.netty.channel.ChannelHandler.Sharable;
+
 /**
  * Handler running inside the orchestrator that receives `STEP_RESULT` frames from workers.
  * On receiving a STEP_RESULT it calls `StepService.markStepDone(...)` and replies with
  * `ACK` when applied or `STALE_LEADER_REJECT` when rejected.
  */
+@Sharable
 public final class StepResultRpcHandler extends SimpleChannelInboundHandler<FrameMessage> {
 
     private final StepService stepService;
@@ -47,6 +50,8 @@ public final class StepResultRpcHandler extends SimpleChannelInboundHandler<Fram
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        System.err.println("Exception in StepResultRpcHandler: " + cause.getMessage());
+        cause.printStackTrace();
         ctx.close();
     }
 }
