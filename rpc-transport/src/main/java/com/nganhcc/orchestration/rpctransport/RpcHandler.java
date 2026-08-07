@@ -20,6 +20,8 @@ public class RpcHandler extends SimpleChannelInboundHandler<FrameMessage> {
         switch (msg.messageType()) {
             case FrameMessage.HEARTBEAT -> handleHeartbeat(ctx, msg);
             case FrameMessage.ASSIGN_STEP -> handleAssignStep(ctx, msg);
+            case FrameMessage.ACK -> handleAck(ctx, msg);
+            case FrameMessage.STALE_LEADER_REJECT -> handleStaleLeaderReject(ctx, msg);
             default -> throw new IllegalArgumentException(
                     "Chưa xử lý messageType=" + msg.messageType());
         }
@@ -67,6 +69,18 @@ public class RpcHandler extends SimpleChannelInboundHandler<FrameMessage> {
 
         FrameMessage stepResult = new FrameMessage(FrameMessage.STEP_RESULT, msg.requestId(), incoming, payloadBytes);
         ctx.writeAndFlush(stepResult);
+    }
+
+    private void handleAck(ChannelHandlerContext ctx, FrameMessage msg) {
+        System.out.printf("Nhận ACK cho requestId=%d, epoch=%d%n", msg.requestId(), msg.epoch());
+    }
+
+    private void handleStaleLeaderReject(ChannelHandlerContext ctx, FrameMessage msg) {
+        System.err.printf("Nhận STALE_LEADER_REJECT cho requestId=%d, leader_epoch_moi=%d. Ngừng xử lý!%n",
+                msg.requestId(), msg.epoch());
+        // Có thể bổ sung logic update highestEpochSeen nếu orchestrator trả về epoch mới
+        long newEpoch = msg.epoch();
+        acceptEpoch(newEpoch);
     }
 
     private boolean acceptEpoch(long incomingEpoch) {
