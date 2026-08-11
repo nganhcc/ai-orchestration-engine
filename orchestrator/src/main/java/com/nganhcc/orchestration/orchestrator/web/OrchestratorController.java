@@ -263,4 +263,12 @@ public class OrchestratorController {
                 "stepsRerun", stepMetrics.getStepsRerun()
         ));
     }
+
+    @GetMapping("/batches")
+    public ResponseEntity<?> getBatches() {
+        List<Map<String, Object>> batches = jdbc.queryForList(
+                "SELECT batch_id, idempotency_key, status, total_documents, priority, created_at " +
+                "FROM batch_job ORDER BY created_at DESC");
+        return ResponseEntity.ok(batches);
+    }
 }
