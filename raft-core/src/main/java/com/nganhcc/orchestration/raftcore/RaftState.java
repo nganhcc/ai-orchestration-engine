@@ -9,7 +9,7 @@ public final class RaftState {
     public long epoch = 0;
     public String votedFor = null;
 
-    public final RaftLog log = new RaftLog();
+    public final RaftLog log;
 
     public long commitIndex = 0;
     public long lastApplied = 0;
@@ -17,6 +17,11 @@ public final class RaftState {
     public long lastSnapshotTerm = 0;
 
     public RaftState(String selfId) {
+        this(selfId, RaftLogStore.NO_OP);
+    }
+
+    public RaftState(String selfId, RaftLogStore store) {
         this.selfId = selfId;
+        this.log = new RaftLog(selfId, store);
     }
 }
