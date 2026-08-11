@@ -20,98 +20,131 @@ services:
     ports:
       - "6379:6379"
 
+  kafka:
+    image: apache/kafka:3.7.0
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
   orchestrator-a:
     build:
       context: .
       dockerfile: Dockerfile.orchestrator
     environment:
-      SPRING_MAIN_WEB_APPLICATION_TYPE: none
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
       SPRING_DATASOURCE_USERNAME: orchestration
       SPRING_DATASOURCE_PASSWORD: devpassword
       SPRING_DATA_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       RAFT_NODE_ID: orchestrator-a
       RAFT_PORT: 7000
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_PEERS: orchestrator-b=orchestrator-b:7000,orchestrator-c=orchestrator-c:7000
-      ORCHESTRATOR_RPC_PORT: 9000
-      ORCHESTRATOR_RPC_BIND_HOST: 0.0.0.0
+      ORCHESTRATOR_STEPSTALENESTHRESHOLDSECONDS: 10
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+      kafka:
+        condition: service_started
     ports:
+      - "8081:8080"
       - "7001:7000"
-      - "9001:9000"
 
   orchestrator-b:
     build:
       context: .
       dockerfile: Dockerfile.orchestrator
     environment:
-      SPRING_MAIN_WEB_APPLICATION_TYPE: none
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
       SPRING_DATASOURCE_USERNAME: orchestration
       SPRING_DATASOURCE_PASSWORD: devpassword
       SPRING_DATA_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       RAFT_NODE_ID: orchestrator-b
       RAFT_PORT: 7000
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_PEERS: orchestrator-a=orchestrator-a:7000,orchestrator-c=orchestrator-c:7000
-      ORCHESTRATOR_RPC_PORT: 9000
-      ORCHESTRATOR_RPC_BIND_HOST: 0.0.0.0
+      ORCHESTRATOR_STEPSTALENESTHRESHOLDSECONDS: 10
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+      kafka:
+        condition: service_started
     ports:
+      - "8082:8080"
       - "7002:7000"
-      - "9002:9000"
 
   orchestrator-c:
     build:
       context: .
       dockerfile: Dockerfile.orchestrator
     environment:
-      SPRING_MAIN_WEB_APPLICATION_TYPE: none
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
       SPRING_DATASOURCE_USERNAME: orchestration
       SPRING_DATASOURCE_PASSWORD: devpassword
       SPRING_DATA_REDIS_HOST: redis
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       RAFT_NODE_ID: orchestrator-c
       RAFT_PORT: 7000
       RAFT_BIND_HOST: 0.0.0.0
       RAFT_PEERS: orchestrator-a=orchestrator-a:7000,orchestrator-b=orchestrator-b:7000
-      ORCHESTRATOR_RPC_PORT: 9000
-      ORCHESTRATOR_RPC_BIND_HOST: 0.0.0.0
+      ORCHESTRATOR_STEPSTALENESTHRESHOLDSECONDS: 10
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+      kafka:
+        condition: service_started
     ports:
+      - "8083:8080"
       - "7003:7000"
-      - "9003:9000"
 
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     environment:
-      SPRING_MAIN_WEB_APPLICATION_TYPE: none
-      # For local Docker desktop, connect to the host-mapped orchestrator RPC port
-      ORCHESTRATOR_HOST: host.docker.internal
-      ORCHESTRATOR_PORT: 9001
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
       SPRING_DATASOURCE_USERNAME: orchestration
       SPRING_DATASOURCE_PASSWORD: devpassword
+      SERVER_PORT: 8091
+    ports:
+      - "8091:8091"
     depends_on:
-      orchestrator-a:
+      kafka:
         condition: service_started
-    links:
-      - orchestrator-a
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orchestration
+      SPRING_DATASOURCE_USERNAME: orchestration
+      SPRING_DATASOURCE_PASSWORD: devpassword
+      SERVER_PORT: 8092
+    ports:
+      - "8092:8092"
+    depends_on:
+      kafka:
+        condition: service_started
 
 volumes:
   pgdata:

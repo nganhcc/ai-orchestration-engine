@@ -26,6 +26,8 @@
 - `jobId`/`stepId` chứa tiếng Việt: `.getBytes(UTF_8).length` khác `.length()`. Luôn dùng byte length khi ghi length field, không dùng số ký tự.
 - `jobIdLen` dùng kiểu `short` có dấu trong Java — đọc gần biên 32768 mà quên `Short.toUnsignedInt` sẽ ra số âm → `NegativeArraySizeException`.
 - Test `AppendEntries`/`RequestVote`: dựng `state` giả lập phải khớp `prevLogIndex`/`prevLogTerm` thực tế của log, không phải số bất kỳ — dữ liệu test không nhất quán từng gây fail nhầm (lỗi ở test, không phải ở logic).
+- **Lỗi Plain JAR đè Fat JAR trong Docker**: Luôn tắt task `jar` của Gradle (`tasks.named<Jar>("jar") { enabled = false }`) ở các Spring Boot modules khi sử dụng câu lệnh `COPY .../*.jar` trong Dockerfile. Nếu không, file plain jar rỗng sẽ đè lên Fat JAR làm ứng dụng crash ngay khi khởi động.
+- **Spring Kafka Dependency Injection**: Luôn khai báo tường minh các `@Bean` như `ObjectMapper`, `KafkaTemplate`, `ProducerFactory`, `ConsumerFactory`, `ConcurrentKafkaListenerContainerFactory` trong cấu hình `@Configuration` thay vì phụ thuộc hoàn toàn vào autoconfiguration của Spring Boot để tránh lỗi thiếu bean.
 
 # Không được đụng / cẩn thận khi sửa
 
@@ -36,7 +38,7 @@
 # Nguyên tắc làm việc của dự án này
 
 - Viết logic thuần (test được, không cần network/DB thật) trước, chỉ gắn hạ tầng thật (Netty, Raft cluster, Kafka) sau khi logic pass test ổn định. Đừng gắn Netty vào Raft trước khi logic thuần đã đúng — không phân biệt được bug do logic hay do network.
-- Trạng thái phase hiện tại và việc cần làm tiếp: xem `PROGRESS.md`. File này (AGENT.md) không lặp lại trạng thái đó vì nó đổi liên tục.
+- Trạng thái phase hiện tại và việc cần làm tiếp: xem `PROGRESS.md`. 
 - Roadmap đầy đủ và lý do chọn kỹ thuật: xem `PLAN.md` / `SPEC.md`.
 
 # Definition of done

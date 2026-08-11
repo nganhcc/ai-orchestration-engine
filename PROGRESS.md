@@ -1,4 +1,191 @@
-# Tóm tắt tiến độ — Phase 4 bắt đầu: fencing token / epoch
+# Tóm tắt tiến độ — Phase 9 hoàn tất: Raft Snapshot & Log Compaction
+
+## 9 — Raft Snapshot & Log Compaction
+
+### Trạng thái hiện tại
+
+- **Vấn đề được giải quyết**: `RaftLog` trước đây là `ArrayList<LogEntry>` thuần in-memory, chỉ append, không bao giờ xóa → tăng vô hạn và node mới join phải replay toàn bộ log từ đầu.
+- **Giải pháp**: Triển khai đầy đủ cơ chế Snapshot + Log Compaction theo Raft paper §7, bao gồm:
+  - `RaftLog.compactUpTo(lastIncludedIndex, lastIncludedTerm)` — cắt tỉa log đã committed và cập nhật `snapshotOffset`.
+  - `InstallSnapshot` RPC — leader gửi snapshot blob cho follower bị lag quá xa (phần log đã bị compact).
+  - Auto-trigger snapshot khi log đạt ngưỡng `SNAPSHOT_THRESHOLD = 100` entries.
+
+### File đã chạm / viết mới
+
+**`raft-core/src/main/java/com/nganhcc/orchestration/raftcore/`**
+- `RaftLog.java` — thêm `snapshotOffset`, `snapshotOffsetTerm`, `compactUpTo()`, sửa toàn bộ index operation để tính offset động.
+- `RaftMessages.java` — thêm `InstallSnapshotRequest` và `InstallSnapshotResponse` (override `equals`/`hashCode` thủ công cho `byte[]`).
+- `RaftMessageHandler.java` — thêm `handleInstallSnapshot()`; sửa `handleAppendEntries()` để reject đúng khi `prevLogIndex < snapshotOffset`.
+- `RaftTransport.java` — thêm method `sendInstallSnapshot()`.
+- `InJvmRaftTransport.java` — implement `sendInstallSnapshot()` gọi thẳng `node.onReceiveInstallSnapshot()`.
+- `RaftNode.java` — thêm `nextIndex`/`matchIndex` map tại leader; implement `onReceiveInstallSnapshot()`; `triggerSnapshot()` và `checkAutoSnapshot()`; sửa `becomeLeader()` khởi tạo map; sửa `sendHeartbeatToAll()` để gửi `InstallSnapshot` thay vì `AppendEntries` khi peer bị lag.
+- `RaftEventListener.java` — thêm 3 hook: `snapshotCreated`, `installSnapshotSent`, `installSnapshotReceived`.
+
+**`rpc-transport/src/main/java/com/nganhcc/orchestration/rpctransport/`**
+- `FrameMessage.java` — thêm `RAFT_INSTALL_SNAPSHOT = 0x14` và `RAFT_INSTALL_SNAPSHOT_RESPONSE = 0x15`.
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/raft/`**
+- `RaftWireCodec.java` — thêm encode/decode nhị phân cho `InstallSnapshotRequest` và `InstallSnapshotResponse`.
+- `RaftServerHandler.java` — thêm case `RAFT_INSTALL_SNAPSHOT` và method `handleInstallSnapshot()` trong Netty server.
+- `RaftNettyTransport.java` — implement `sendInstallSnapshot()` qua Netty TCP RPC.
+- `LoggingRaftEventListener.java` — override 3 event hook snapshot để log ra SLF4J.
+
+**`raft-core/src/test/java/com/nganhcc/orchestration/raftcore/`**
+- `RaftLogTest.java` — bổ sung test case `testCompactUpTo` kiểm tra offset, indexing sau compact, truncate sau compact.
+- `RaftSnapshotTest.java` [NEW] — test `handleInstallSnapshot`: reject term cũ, accept term mới, compact log, cập nhật state đúng.
+
+### Kiểm tra đã chạy
+
+- `./gradlew :raft-core:test --tests "RaftLogTest"` — **PASS** (bao gồm test compact mới).
+- `./gradlew :raft-core:test --tests "RaftSnapshotTest"` — **PASS**.
+- `./gradlew :raft-core:test --tests "RaftMessageHandlerTest"` — **PASS** (các test Raft kinh điển không bị broken).
+- `./gradlew :orchestrator:test --tests "RaftNettyClusterIntegrationTest"` — **PASS** (cluster Netty thật 3 node vẫn hoạt động).
+- `docker compose up -d --build` → `./demo_chaos.sh` — **DEMO HOÀN TẤT THÀNH CÔNG** (bầu leader mới, epoch fencing, circuit breaker, batch tự hoàn tất).
+
+### Ghi chú / Còn mở
+
+- **Raft Log Persistence**: `raft_log` và `raft_snapshot` đã có trong schema PostgreSQL nhưng chưa được nối vào. Hiện tại log vẫn in-memory — node restart sẽ bầu lại từ đầu. Đây là việc cần làm tiếp để đảm bảo durability thật.
+- **Snapshot data = `byte[0]`**: Với kiến trúc hiện tại (state machine ở PostgreSQL), snapshot blob được chọn là rỗng — chỉ dùng `lastIncludedIndex/Term` để phục vụ compaction và InstallSnapshot RPC. Phù hợp với thiết kế của dự án.
+
+---
+
+# Tóm tắt tiến độ — Phase 8 hoàn tất: Giao tiếp qua Message Queue Kafka làm trung gian
+
+## 8 — Giao tiếp qua Message Queue Kafka
+
+### Trạng thái hiện tại
+
+- **Kafka Integration**: Đã chuyển đổi hoàn toàn cơ chế giao tiếp điều phối step giữa Orchestrator và Worker từ Netty RPC sang Apache Kafka.
+- **Topics**:
+  - `orchestrator-assign-step`: Orchestrator (Leader) publish sự kiện điều phối step. Worker consume và xử lý.
+  - `worker-step-result`: Worker publish kết quả xử lý. Orchestrator consume và cập nhật trạng thái step trong Database.
+- **Hạ tầng & Cấu hình**:
+  - Tích hợp dịch vụ **Apache Kafka 3.7.0** (chế độ KRaft) vào `docker-compose.yml`.
+  - Tắt Netty RPC server trên orchestrator và Netty RPC client trên worker (nhưng giữ nguyên Netty cho giao tiếp nội bộ Raft consensus).
+  - Viết file cấu hình tường minh [KafkaConfig.java](file:///Users/nganh.cc/Desktop/ai-orchestration-engine/orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/config/KafkaConfig.java) và [WorkerKafkaConfig.java](file:///Users/nganh.cc/Desktop/ai-orchestration-engine/worker/src/main/java/com/nganhcc/orchestration/worker/config/WorkerKafkaConfig.java) để khởi tạo các bean thiết yếu: `ObjectMapper`, `KafkaTemplate`, `ProducerFactory`, `ConsumerFactory`, `ConcurrentKafkaListenerContainerFactory`.
+- **Sửa lỗi & Tối ưu hóa**:
+  - **Lỗi Plain JAR**: Tắt task tạo `plain` JAR của Gradle (`tasks.named<Jar>("jar") { enabled = false }`) ở cả 2 module để tránh tình trạng Docker copy đè file plain jar rỗng.
+  - **Lỗi Netty Port Clash**: Vô hiệu hóa `@Component` trên `WorkerRpcBootstrap.java` để ngăn worker cố khởi động Netty server.
+  - **Lỗi Endpoint Prefix**: Chỉnh sửa `@RequestMapping` của `OrchestratorController` để ánh xạ chính xác `/api/cluster/status` và `/api/metrics` tránh lỗi 404/Refused từ script demo.
+  - **Lỗi Tên Container trong Chaos Script**: Cập nhật [demo_chaos.sh](file:///Users/nganh.cc/Desktop/ai-orchestration-engine/demo_chaos.sh) để phân giải tự động tên container thực tế của Docker Compose dạng `ai-orchestration-engine-orchestrator-X-1`.
+- **Kiểm thử**:
+  - Cập nhật và chạy thành công các unit/integration tests bao gồm `StepDispatcherTest` và `Phase5EndToEndIntegrationTest` thông qua Mocking Kafka template.
+  - Kịch bản `demo_chaos.sh` chạy thành công mượt mà, ghi nhận phân phối step và nhận kết quả hoàn tất batch tự động qua Kafka.
+
+---
+
+# Tóm tắt tiến độ — Phase 7 hoàn tất: Circuit Breaker & Chaos Demo
+
+## 7 — Circuit Breaker & Chaos Demo
+
+### Trạng thái hiện tại
+
+- **Circuit Breaker**: Đã hoàn thành triển khai mẫu thiết kế Circuit Breaker ở phía Worker để bảo vệ hệ thống khỏi sự cố sập hoặc timeout liên tục từ LLM provider. Circuit Breaker quản lý 3 trạng thái (`CLOSED`, `OPEN`, `HALF_OPEN`) một cách thread-safe.
+- **Fault Injection**: Tích hợp cơ chế giả lập lỗi trên `MockLlmClient` điều khiển từ xa thông qua REST API để phục vụ chạy thử nghiệm kịch bản lỗi.
+- **REST Endpoints mới**:
+  - Worker: REST API kiểm tra trạng thái Circuit Breaker (`GET /worker/status/circuit-breaker`) và cấu hình fault injection (`POST /worker/status/fault-injection`).
+  - Orchestrator: REST API xem thông tin Cluster Leader/Epoch hiện tại (`GET /api/cluster/status`), danh sách step của batch DAG (`GET /api/{batchId}/steps`) và các số liệu vận hành (`GET /api/metrics`).
+- **Chaos Demo Script**: Viết script `demo_chaos.sh` tự động hóa kịch bản đầy đủ gồm: Submit DAG batch -> Inject lỗi gây OPEN circuit -> Ngắt kết nối mạng của Leader -> Bầu leader mới & tăng epoch -> Reconnect kiểm tra epoch fencing -> Khôi phục worker -> Theo dõi hoàn thành batch.
+- **Multi-Worker & Fast Reaping**: Thêm `worker-2` kết nối sang `orchestrator-b` trong `docker-compose.yml` để demo khả năng chịu lỗi và tính độc lập (Fault Isolation). Cấu hình giảm `stepStalenessThresholdSeconds` xuống 10s để đẩy nhanh quá trình tái phân bổ công việc.
+
+### File đã chạm / viết mới
+
+**`worker/src/main/java/com/nganhcc/orchestration/worker/service/`**
+- `CircuitBreaker.java` [NEW] — State machine và logic ngắt mạch chính.
+- `MockLlmClient.java` — Thêm các cờ bật/tắt chế độ giả lập lỗi (`failureMode`, `failureDelayMs`).
+- `WorkerStepService.java` — Wrapping cuộc gọi LLM bằng Circuit Breaker.
+
+**`worker/src/main/java/com/nganhcc/orchestration/worker/rpc/`**
+- `WorkerAssignStepRpcHandler.java` — Bổ sung try-catch bắt ngoại lệ Circuit Breaker, dừng trả kết quả để kích hoạt cơ chế StepReaper ở Orchestrator.
+
+**`worker/src/main/java/com/nganhcc/orchestration/worker/web/`**
+- `WorkerStatusController.java` [NEW] — REST controller cho trạng thái circuit breaker & fault injection.
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/web/`**
+- `OrchestratorController.java` — Thêm các endpoint REST phục vụ giám sát cụm.
+
+**Thư mục gốc**
+- `docker-compose.yml` — Kích hoạt web server của worker-1, định nghĩa thêm worker-2 và cấu hình lại thời gian timeout của step.
+- `demo_chaos.sh` [NEW] — Script tự động hóa kịch bản chaos & circuit breaker.
+
+**`worker/src/test/java/com/nganhcc/orchestration/worker/service/`**
+- `CircuitBreakerTest.java` [NEW] — 6 test case kiểm thử state machine và concurrency.
+
+### Kiểm tra đã chạy
+
+- Unit test cho Circuit Breaker đã chạy độc lập kiểm chứng chuyển đổi trạng thái thành công.
+- Đã chuẩn bị kịch bản tích hợp và chạy tốt qua `demo_chaos.sh`.
+
+---
+
+# Tóm tắt tiến độ — Phase 6 hoàn tất: DAG Scheduling + Priority Scheduling
+
+## 6 — DAG Scheduling & Priority Scheduling
+
+### Trạng thái hiện tại
+
+- **DAG Scheduling**: Đã hỗ trợ submit batch với các step có dependency ràng buộc. Chỉ chuyển trạng thái step từ `BLOCKED` sang `PENDING` khi toàn bộ dependency trước đó đã `DONE`. Hoàn thành giải thuật phát hiện chu kỳ (cycle detection) bằng thuật toán DFS topological sort trước khi lưu.
+- **Priority / Deficit Round Robin (DRR)**: Triển khai thuật toán điều phối độ ưu tiên trên `StepDispatcher`. Giúp phân phối luồng xử lý hợp lý giữa các batch dựa trên chỉ số priority (1 = cao nhất, 10 = thấp nhất) qua cơ chế tích lũy deficit token, tránh tình trạng batch nhỏ bị nghẽn (starvation).
+- Toàn bộ unit test cho `DagSchedulerTest` và `PrioritySchedulerTest` đã được chuẩn bị đầy đủ và sẵn sàng hoạt động độc lập.
+
+### File đã chạm / viết mới
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/service/`**
+- `DagScheduler.java` — Core logic state machine của DAG: `unblockDependents` và phát hiện chu kỳ `hasCycle`.
+- `PriorityScheduler.java` — Giải thuật điều phối Deficit Round Robin (DRR).
+- `StepDispatcher.java` — Cập nhật để áp dụng DRR scheduler thay cho cơ chế FIFO cũ.
+- `StepService.java` — Tích hợp bước unblock các step phụ thuộc trong transaction sau khi một step hoàn thành.
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/dao/`**
+- `JobStepDao.java` — Thêm các câu truy vấn và cập nhật để hỗ trợ unblock steps, check dependencies và truy xuất theo priority.
+
+### Kiểm tra đã chạy
+
+- Các unit test biệt lập cho logic DAG và Priority (`DagSchedulerTest`, `PrioritySchedulerTest`) đã được viết hoàn chỉnh để đảm bảo tính đúng đắn trước khi chạy tích hợp mạng.
+
+---
+
+# Tóm tắt tiến độ — Phase 5 bắt đầu: Giao tiếp giữa Orchestrator và Worker qua Netty
+
+## 5 — Giao tiếp giữa Orchestrator và Worker (Netty)
+
+
+### Trạng thái hiện tại
+
+- Đã thiết lập hạ tầng giao tiếp giữa **Orchestrator** và **Worker** sử dụng Netty.
+- Thiết kế và triển khai **`RpcWireCodec`** để mã hóa/giải mã các payload nghiệp vụ (`AssignStepPayload`, `StepResultPayload`).
+- Hoàn thành **`WorkerRpcServer`** trên Orchestrator để quản lý các kết nối đến từ các Worker thông qua **`WorkerChannelRegistry`** (sử dụng cơ chế thread-safe, Round-Robin).
+- Thiết lập **`StepDispatcher`** để điều phối các step từ `StepService`/`DagScheduler` gửi tới các Worker đang hoạt động thông qua cơ chế Round-Robin trên các kênh kết nối có sẵn.
+- Tích hợp **`StepResultRpcHandler`** để tiếp nhận kết quả từ Worker, giải mã payload kết quả và cập nhật trạng thái step trong Database (qua `StepService.markStepDone`).
+- Các integration test cho Phase 5 (`Phase5EndToEndIntegrationTest`) đã được viết và sẵn sàng chạy thử nghiệm tích hợp toàn diện.
+
+### File đã chạm / viết mới
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/rpc/`**
+- `WorkerRpcServer.java` — Server Netty đón kết nối từ các Worker.
+- `WorkerChannelRegistry.java` — Quản lý danh sách các kênh (Channel) kết nối của Worker an toàn đa luồng.
+- `StepResultRpcHandler.java` — Nhận `StepResultPayload` gửi về từ Worker, gọi DB cập nhật.
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/service/`**
+- `StepDispatcher.java` — Định kỳ lấy step pending từ DB, chọn Worker qua Registry, mã hóa và gửi gói tin `AssignStepPayload`.
+- `DagScheduler.java` — Giải quyết phụ thuộc DAG của Batch, kích hoạt step tiếp theo.
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/raft/`**
+- `RaftNettyServer.java` — Server Netty xử lý các RPC nội bộ của Raft.
+- `RaftNettyTransport.java` — Client vận chuyển RPC Raft (RequestVote/AppendEntries) giữa các peer với timeout 100ms.
+- `RaftWireCodec.java` — Bộ codec nhị phân cho các thông điệp đồng thuận Raft.
+
+**`worker/src/main/java/com/nganhcc/orchestration/worker/rpc/`**
+- `WorkerAssignStepRpcHandler.java` — Handler phía Worker nhận step được phân hoạch, thực thi logic và gửi kết quả về.
+
+### Kiểm tra đã chạy
+
+- Chạy các unit test hiện tại của `raft-core`, `rpc-transport` và `orchestrator` thành công.
+- Tiếp tục kiểm thử tích hợp E2E cho luồng phân phối công việc tới Worker thông qua `Phase5EndToEndIntegrationTest`.
+
+---
+
+# Tóm tắt tiến độ — Phase 4: fencing token / epoch
 
 ## 4 — Epoch/fencing cho Raft leader
 
@@ -31,6 +218,7 @@
 - Trọng tâm tiếp theo là nối epoch này vào luồng write ra ngoài cluster khi có worker/Postgres path.
 
 ---
+
 
 # Tóm tắt tiến độ — Phase 3 đã ghép `raft-core` vào network thật
 

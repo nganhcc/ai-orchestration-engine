@@ -6,14 +6,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+//config cho RAFT: trả về node_id, host, port và danh sách các node khác, dùng để khởi tạo RAFT 
 record RaftClusterConfig(
         String selfId,
         String bindHost,
         int port,
-        Map<String, InetSocketAddress> peers
-) {
+        Map<String, InetSocketAddress> peers) {
     static Optional<RaftClusterConfig> fromEnvironment(Map<String, String> env) {
         Objects.requireNonNull(env, "env");
+        //các biến trong env nằm ở file docker-compose.yml 
+        // ví dụ: RAFT_NODE_ID = orchestrator-a -> RAFT_PORT = 8081 -> RAFT_PEERS = orchestrator-a=localhost:8081,orchestrator-b=localhost:8082,orchestrator-c=localhost:8083
+
 
         String selfId = trimToNull(env.get("RAFT_NODE_ID"));
         String portValue = trimToNull(env.get("RAFT_PORT"));

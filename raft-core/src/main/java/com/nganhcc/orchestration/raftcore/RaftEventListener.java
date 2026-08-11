@@ -38,4 +38,8 @@ public interface RaftEventListener {
             long toTerm,
             String reason
     ) {}
+
+    default void snapshotCreated(String nodeId, long lastIncludedIndex, long lastIncludedTerm) {}
+    default void installSnapshotSent(String nodeId, String peerId, long lastIncludedIndex) {}
+    default void installSnapshotReceived(String nodeId, String fromLeaderId, long lastIncludedIndex, boolean success) {}
 }

@@ -30,6 +30,11 @@ public final class RaftNode {
     private long electionStartedAtNanos = 0L;
     private long currentElectionTimeoutMs = 0L;
 
+    // Chỉ dùng khi node là LEADER
+    private final java.util.Map<String, Long> nextIndex = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Long> matchIndex = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int SNAPSHOT_THRESHOLD = 100; // Số entries tối đa trước khi trigger snapshot tự động
+
     public RaftNode(String selfId, Set<String> peerIds, RaftTransport transport) {
         this(selfId, peerIds, transport, RaftEventListener.noOp());
     }
@@ -45,6 +50,33 @@ public final class RaftNode {
 
     public RaftState state() {
         return state;
+    }
+
+    public synchronized boolean isLeader() {
+        return state.nodeState == NodeState.LEADER;
+    }
+
+    public synchronized long epoch() {
+        return state.epoch;
+    }
+
+    public synchronized void triggerSnapshot() {
+        long lastApplied = state.lastApplied;
+        if (lastApplied <= state.lastSnapshotIndex) {
+            return;
+        }
+        long term = state.log.termAt(lastApplied);
+        // Tạo snapshot rỗng (chỉ lưu index/term phục vụ fencing và compaction)
+        state.log.compactUpTo(lastApplied, term);
+        state.lastSnapshotIndex = lastApplied;
+        state.lastSnapshotTerm = term;
+        eventListener.snapshotCreated(state.selfId, lastApplied, term);
+    }
+
+    public synchronized void checkAutoSnapshot() {
+        if (state.log.size() >= SNAPSHOT_THRESHOLD) {
+            triggerSnapshot();
+        }
     }
 
     // ---------- Vòng đời ----------
@@ -91,6 +123,23 @@ public final class RaftNode {
             // AppendEntries hợp lệ từ 1 leader thật -> chứng tỏ cluster đang có leader,
             // reset để không tự timeout giữa chừng
             resetElectionTimer();
+        }
+        return resp;
+    }
+
+    public synchronized InstallSnapshotResponse onReceiveInstallSnapshot(InstallSnapshotRequest req) {
+        long beforeTerm = state.currentTerm;
+        long beforeEpoch = state.epoch;
+        NodeState beforeState = state.nodeState;
+        InstallSnapshotResponse resp = RaftMessageHandler.handleInstallSnapshot(state, req);
+        if (state.nodeState == NodeState.FOLLOWER && beforeState != NodeState.FOLLOWER) {
+            notifyStepDown(req.leaderId(), beforeTerm, beforeEpoch, "install_snapshot", beforeState == NodeState.LEADER);
+        }
+        if (resp.success()) {
+            eventListener.installSnapshotReceived(state.selfId, req.leaderId(), req.lastIncludedIndex(), true);
+            resetElectionTimer();
+        } else {
+            eventListener.installSnapshotReceived(state.selfId, req.leaderId(), req.lastIncludedIndex(), false);
         }
         return resp;
     }
@@ -197,11 +246,14 @@ public final class RaftNode {
         return peerIds.size() + 1; // + chính nó
     }
 
-    // ---------- Trở thành leader ----------
-
     private void becomeLeader() {
         state.nodeState = NodeState.LEADER;
         state.epoch = state.currentTerm;
+        long lastLogIndex = state.log.lastIndex();
+        for (String peerId : peerIds) {
+            nextIndex.put(peerId, lastLogIndex + 1);
+            matchIndex.put(peerId, 0L);
+        }
         if (electionTask != null) {
             electionTask.cancel(false); // leader không cần election timer nữa
         }
@@ -214,59 +266,117 @@ public final class RaftNode {
 
     private void sendHeartbeatToAll() {
         long termAtStart;
-        AppendEntriesRequest req;
+        long lastSnapshotIdx;
+        long lastSnapshotTrm;
         synchronized (this) {
             if (state.nodeState != NodeState.LEADER || stopped) {
                 if (heartbeatTask != null) heartbeatTask.cancel(false);
                 return;
             }
             termAtStart = state.currentTerm;
-            req = new AppendEntriesRequest(
-                state.currentTerm,
-                state.selfId,
-                state.log.lastIndex(),
-                state.log.lastTerm(),
-                List.of(),               // rỗng = heartbeat, chưa replicate gì ở bước này
-                state.commitIndex);
+            lastSnapshotIdx = state.lastSnapshotIndex;
+            lastSnapshotTrm = state.lastSnapshotTerm;
         }
 
         for (String peerId : peerIds) {
-            long sendStartedAt = System.nanoTime();
-            AppendEntriesResponse resp;
-            try {
-                resp = transport.sendAppendEntries(peerId, req);
-            } catch (Exception e) {
-                eventListener.heartbeat(
-                    state.selfId,
-                    peerId,
+            long peerNextIdx = nextIndex.getOrDefault(peerId, 1L);
+            if (peerNextIdx <= lastSnapshotIdx) {
+                // Follower bị lag quá xa, đã bị compact log -> Gửi InstallSnapshot
+                InstallSnapshotRequest snapshotReq = new InstallSnapshotRequest(
                     termAtStart,
-                    millisSince(sendStartedAt),
-                    false,
-                    -1
-                );
-                continue;
-            }
-            synchronized (this) {
-                if (state.currentTerm != termAtStart) return;
-                eventListener.heartbeat(
                     state.selfId,
-                    peerId,
-                    termAtStart,
-                    millisSince(sendStartedAt),
-                    resp.term() <= state.currentTerm,
-                    resp.term()
+                    lastSnapshotIdx,
+                    lastSnapshotTrm,
+                    new byte[0] // Demo snapshot rỗng
                 );
-                if (resp.term() > state.currentTerm) {
-                    long previousTerm = state.currentTerm;
-                    long previousEpoch = state.epoch;
-                    state.currentTerm = resp.term();
-                    state.votedFor = null;
-                    state.nodeState = NodeState.FOLLOWER;
-                    state.epoch = 0;
-                    notifyStepDown(peerId, previousTerm, previousEpoch, "higher_term_append_entries_response", true);
-                    if (heartbeatTask != null) heartbeatTask.cancel(false);
-                    resetElectionTimer();
-                    return;
+                eventListener.installSnapshotSent(state.selfId, peerId, lastSnapshotIdx);
+                long sendStartedAt = System.nanoTime();
+                InstallSnapshotResponse snapshotResp;
+                try {
+                    snapshotResp = transport.sendInstallSnapshot(peerId, snapshotReq);
+                } catch (Exception e) {
+                    continue;
+                }
+                synchronized (this) {
+                    if (state.currentTerm != termAtStart) return;
+                    if (snapshotResp.term() > state.currentTerm) {
+                        long previousTerm = state.currentTerm;
+                        long previousEpoch = state.epoch;
+                        state.currentTerm = snapshotResp.term();
+                        state.votedFor = null;
+                        state.nodeState = NodeState.FOLLOWER;
+                        state.epoch = 0;
+                        notifyStepDown(peerId, previousTerm, previousEpoch, "higher_term_install_snapshot_response", true);
+                        if (heartbeatTask != null) heartbeatTask.cancel(false);
+                        resetElectionTimer();
+                        return;
+                    }
+                    if (snapshotResp.success()) {
+                        nextIndex.put(peerId, lastSnapshotIdx + 1);
+                        matchIndex.put(peerId, lastSnapshotIdx);
+                    }
+                }
+            } else {
+                // Gửi AppendEntries thông thường
+                AppendEntriesRequest req;
+                synchronized (this) {
+                    req = new AppendEntriesRequest(
+                        state.currentTerm,
+                        state.selfId,
+                        state.log.lastIndex(),
+                        state.log.lastTerm(),
+                        List.of(),               // rỗng = heartbeat, chưa replicate gì ở bước này
+                        state.commitIndex);
+                }
+                long sendStartedAt = System.nanoTime();
+                AppendEntriesResponse resp;
+                try {
+                    resp = transport.sendAppendEntries(peerId, req);
+                } catch (Exception e) {
+                    eventListener.heartbeat(
+                        state.selfId,
+                        peerId,
+                        termAtStart,
+                        millisSince(sendStartedAt),
+                        false,
+                        -1
+                    );
+                    continue;
+                }
+                synchronized (this) {
+                    if (state.currentTerm != termAtStart) return;
+                    eventListener.heartbeat(
+                        state.selfId,
+                        peerId,
+                        termAtStart,
+                        millisSince(sendStartedAt),
+                        resp.term() <= state.currentTerm,
+                        resp.term()
+                    );
+                    if (resp.term() > state.currentTerm) {
+                        long previousTerm = state.currentTerm;
+                        long previousEpoch = state.epoch;
+                        state.currentTerm = resp.term();
+                        state.votedFor = null;
+                        state.nodeState = NodeState.FOLLOWER;
+                        state.epoch = 0;
+                        notifyStepDown(peerId, previousTerm, previousEpoch, "higher_term_append_entries_response", true);
+                        if (heartbeatTask != null) heartbeatTask.cancel(false);
+                        resetElectionTimer();
+                        return;
+                    }
+                    if (resp.success()) {
+                        long nextIdx = req.prevLogIndex() + req.entries().size() + 1;
+                        long matchIdx = req.prevLogIndex() + req.entries().size();
+                        nextIndex.put(peerId, Math.max(nextIndex.getOrDefault(peerId, 1L), nextIdx));
+                        matchIndex.put(peerId, Math.max(matchIndex.getOrDefault(peerId, 0L), matchIdx));
+                    } else {
+                        // Trừ phi term của response lớn hơn (đã xử lý ở trên), nếu fail do consistency, ta lùi nextIndex của peer đó
+                        long currentNext = nextIndex.getOrDefault(peerId, 1L);
+                        if (currentNext > 1) {
+                            nextIndex.put(peerId, currentNext - 1);
+                        }
+                    }
                 }
             }
         }

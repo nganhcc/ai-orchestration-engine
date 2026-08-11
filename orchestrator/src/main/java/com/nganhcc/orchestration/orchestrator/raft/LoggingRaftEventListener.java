@@ -74,4 +74,22 @@ final class LoggingRaftEventListener implements RaftEventListener {
                 toTerm,
                 reason);
     }
+
+    @Override
+    public void snapshotCreated(String nodeId, long lastIncludedIndex, long lastIncludedTerm) {
+        log.info("raft.event=snapshot_created nodeId={} lastIncludedIndex={} lastIncludedTerm={}",
+                nodeId, lastIncludedIndex, lastIncludedTerm);
+    }
+
+    @Override
+    public void installSnapshotSent(String nodeId, String peerId, long lastIncludedIndex) {
+        log.info("raft.event=install_snapshot_sent nodeId={} peerId={} lastIncludedIndex={}",
+                nodeId, peerId, lastIncludedIndex);
+    }
+
+    @Override
+    public void installSnapshotReceived(String nodeId, String fromLeaderId, long lastIncludedIndex, boolean success) {
+        log.info("raft.event=install_snapshot_received nodeId={} fromLeaderId={} lastIncludedIndex={} success={}",
+                nodeId, fromLeaderId, lastIncludedIndex, success);
+    }
 }

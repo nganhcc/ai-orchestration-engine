@@ -12,9 +12,15 @@ import java.util.UUID;
 public class OutboxPublisher {
 
     private final JdbcOperations jdbc;
+    private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
+    private final com.nganhcc.orchestration.orchestrator.metrics.StepMetrics stepMetrics;
 
-    public OutboxPublisher(JdbcOperations jdbc) {
+    public OutboxPublisher(JdbcOperations jdbc,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false) org.springframework.data.redis.core.StringRedisTemplate redisTemplate,
+                           @org.springframework.beans.factory.annotation.Autowired(required = false) com.nganhcc.orchestration.orchestrator.metrics.StepMetrics stepMetrics) {
         this.jdbc = jdbc;
+        this.redisTemplate = redisTemplate;
+        this.stepMetrics = stepMetrics;
     }
 
     @Scheduled(fixedDelay = 2000)
@@ -38,9 +44,20 @@ public class OutboxPublisher {
             Object payloadObj = event.get("payload");
             String payload = payloadObj == null ? null : payloadObj.toString();
 
-            // Minimum viable logic: Just log the event as requested in phase4.md
             System.out.printf("Publishing event - ID: %s, Aggregate: %s, Type: %s, Payload: %s%n",
                     eventId, aggregateId, eventType, payload);
+
+            if (redisTemplate != null) {
+                try {
+                    redisTemplate.convertAndSend("step-done-events", payload != null ? payload : "");
+                } catch (Exception e) {
+                    System.err.println("Redis publish failed for event " + eventId + ": " + e.getMessage());
+                }
+            }
+
+            if (stepMetrics != null) {
+                stepMetrics.incrementStepsCompleted();
+            }
 
             jdbc.update(updateSql, eventId);
         }

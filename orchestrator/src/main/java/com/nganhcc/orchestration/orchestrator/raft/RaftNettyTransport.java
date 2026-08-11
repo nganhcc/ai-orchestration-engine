@@ -4,6 +4,8 @@ import com.nganhcc.orchestration.raftcore.RaftMessages.AppendEntriesRequest;
 import com.nganhcc.orchestration.raftcore.RaftMessages.AppendEntriesResponse;
 import com.nganhcc.orchestration.raftcore.RaftMessages.RequestVoteRequest;
 import com.nganhcc.orchestration.raftcore.RaftMessages.RequestVoteResponse;
+import com.nganhcc.orchestration.raftcore.RaftMessages.InstallSnapshotRequest;
+import com.nganhcc.orchestration.raftcore.RaftMessages.InstallSnapshotResponse;
 import com.nganhcc.orchestration.raftcore.RaftTransport;
 import com.nganhcc.orchestration.rpctransport.FrameMessage;
 import com.nganhcc.orchestration.rpctransport.RpcChannelInitializer;
@@ -27,15 +29,15 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class RaftNettyTransport implements RaftTransport, AutoCloseable {
 
-    private static final Duration DEFAULT_TIMEOUT = Duration.ofMillis(100);
+    private static final Duration DEFAULT_TIMEOUT = Duration.ofMillis(100); //tg cho cho moi rpc(100ms)
 
-    private final Map<String, InetSocketAddress> peerAddresses;
-    private final EventLoopGroup clientGroup;
+    private final Map<String, InetSocketAddress> peerAddresses; //Map peerId -> address 
+    private final EventLoopGroup clientGroup; //Nhom IO thread cho cac client connections
     private final Bootstrap bootstrap;
-    private final RaftClientResponseHandler responseHandler;
-    private final ConcurrentHashMap<String, Channel> channels = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, CompletableFuture<FrameMessage>> inflight = new ConcurrentHashMap<>();
-    private final AtomicLong requestIdSequence = new AtomicLong(1L);
+    private final RaftClientResponseHandler responseHandler; //Handler netty de nhan FrameMessage tra ve va hoan thanh CompletableFuture tuon ung
+    private final ConcurrentHashMap<String, Channel> channels = new ConcurrentHashMap<>(); //Cache cac kenh da mo cho tung peer, tranh tao lai connection
+    private final ConcurrentHashMap<Long, CompletableFuture<FrameMessage>> inflight = new ConcurrentHashMap<>(); //Map request id -> future de khi nhan duoc phan hoi, hoan thanh future dung request
+    private final AtomicLong requestIdSequence = new AtomicLong(1L); //Tao moi requestId duy nhat cho moi RPC
     private final Duration timeout;
 
     public RaftNettyTransport(Map<String, InetSocketAddress> peerAddresses) {
@@ -52,6 +54,7 @@ public final class RaftNettyTransport implements RaftTransport, AutoCloseable {
                 .channel(NioSocketChannel.class)
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) timeout.toMillis())
                 .option(ChannelOption.SO_KEEPALIVE, true)
+                //Cho phep nhan response(FrameMessage) tu cac node khac, sau do truyen cho RaftServerHandler xu li
                 .handler(new RpcChannelInitializer(responseHandler));
     }
 
@@ -65,6 +68,12 @@ public final class RaftNettyTransport implements RaftTransport, AutoCloseable {
     public AppendEntriesResponse sendAppendEntries(String targetNodeId, AppendEntriesRequest req) {
         FrameMessage response = send(targetNodeId, RaftWireCodec.encodeAppendEntriesRequest(nextRequestId(), req));
         return RaftWireCodec.decodeAppendEntriesResponse(response);
+    }
+
+    @Override
+    public InstallSnapshotResponse sendInstallSnapshot(String targetNodeId, InstallSnapshotRequest req) {
+        FrameMessage response = send(targetNodeId, RaftWireCodec.encodeInstallSnapshotRequest(nextRequestId(), req));
+        return RaftWireCodec.decodeInstallSnapshotResponse(response);
     }
 
     private long nextRequestId() {
@@ -139,6 +148,7 @@ public final class RaftNettyTransport implements RaftTransport, AutoCloseable {
         clientGroup.shutdownGracefully().syncUninterruptibly();
     }
 
+    // Khi phản hồi trả về, RaftClientResponseHandler khớp requestId → hoàn thành CompletableFuture mà RaftNode đang chờ
     @ChannelHandler.Sharable
     private static final class RaftClientResponseHandler extends io.netty.channel.SimpleChannelInboundHandler<FrameMessage> {
 

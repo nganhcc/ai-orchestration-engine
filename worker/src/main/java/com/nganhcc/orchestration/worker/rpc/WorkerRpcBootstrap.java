@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 import jakarta.annotation.PreDestroy;
 import java.net.InetSocketAddress;
 
-@Component
+// @Component
 public final class WorkerRpcBootstrap implements ApplicationRunner, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(WorkerRpcBootstrap.class);

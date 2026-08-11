@@ -5,6 +5,8 @@ import com.nganhcc.orchestration.raftcore.RaftMessages.AppendEntriesRequest;
 import com.nganhcc.orchestration.raftcore.RaftMessages.AppendEntriesResponse;
 import com.nganhcc.orchestration.raftcore.RaftMessages.RequestVoteRequest;
 import com.nganhcc.orchestration.raftcore.RaftMessages.RequestVoteResponse;
+import com.nganhcc.orchestration.raftcore.RaftMessages.InstallSnapshotRequest;
+import com.nganhcc.orchestration.raftcore.RaftMessages.InstallSnapshotResponse;
 import com.nganhcc.orchestration.rpctransport.FrameMessage;
 
 import java.nio.BufferUnderflowException;
@@ -13,6 +15,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
+//FrameMessage: Dinh nghia cau truc frame truyen giua cac node: goi tin nhi phan 
+//RequestVoteRequest, RequestVoteResponse, AppendEntriesRequest, AppendEntriesResponse: gom 4 truong: messageType, requestId, epoch, payload(byte[])
+//RequestVoteRequest: payload gom: term, candidateId, lastLogIndex, lastLogTerm
+//RequestVoteResponse: payload gom: term, voteGranted
+//AppendEntriesRequest: payload gom: term, leaderId, prevLogIndex, prevLogTerm, leaderCommit, entries
+//AppendEntriesResponse: payload gom: term, success, matchIndex(ptional)
 public final class RaftWireCodec {
 
     private RaftWireCodec() {}
@@ -67,6 +75,32 @@ public final class RaftWireCodec {
     public static AppendEntriesResponse decodeAppendEntriesResponse(FrameMessage frame) {
         requireType(frame, FrameMessage.RAFT_APPEND_ENTRIES_RESPONSE);
         return decodeAppendEntriesResponsePayload(frame.payload());
+    }
+
+    public static FrameMessage encodeInstallSnapshotRequest(long requestId, InstallSnapshotRequest request) {
+        return new FrameMessage(
+                FrameMessage.RAFT_INSTALL_SNAPSHOT,
+                requestId,
+                0L,
+                encodeInstallSnapshotRequestPayload(request));
+    }
+
+    public static InstallSnapshotRequest decodeInstallSnapshotRequest(FrameMessage frame) {
+        requireType(frame, FrameMessage.RAFT_INSTALL_SNAPSHOT);
+        return decodeInstallSnapshotRequestPayload(frame.payload());
+    }
+
+    public static FrameMessage encodeInstallSnapshotResponse(long requestId, InstallSnapshotResponse response) {
+        return new FrameMessage(
+                FrameMessage.RAFT_INSTALL_SNAPSHOT_RESPONSE,
+                requestId,
+                0L,
+                encodeInstallSnapshotResponsePayload(response));
+    }
+
+    public static InstallSnapshotResponse decodeInstallSnapshotResponse(FrameMessage frame) {
+        requireType(frame, FrameMessage.RAFT_INSTALL_SNAPSHOT_RESPONSE);
+        return decodeInstallSnapshotResponsePayload(frame.payload());
     }
 
     public static byte[] encodeRequestVoteRequestPayload(RequestVoteRequest request) {
@@ -186,6 +220,58 @@ public final class RaftWireCodec {
             return new AppendEntriesResponse(term, success, matchIndex);
         } catch (BufferUnderflowException e) {
             throw malformed("AppendEntriesResponse", "payload quá ngắn", e);
+        }
+    }
+
+    public static byte[] encodeInstallSnapshotRequestPayload(InstallSnapshotRequest request) {
+        byte[] leaderIdBytes = utf8Bytes(request.leaderId(), "leaderId");
+        byte[] data = request.data() == null ? new byte[0] : request.data();
+        ByteBuffer buffer = ByteBuffer.allocate(8 + 2 + leaderIdBytes.length + 8 + 8 + 4 + data.length);
+        buffer.putLong(request.term());
+        putBytesWithShortLength(buffer, leaderIdBytes, "leaderId");
+        buffer.putLong(request.lastIncludedIndex());
+        buffer.putLong(request.lastIncludedTerm());
+        buffer.putInt(data.length);
+        buffer.put(data);
+        return buffer.array();
+    }
+
+    public static InstallSnapshotRequest decodeInstallSnapshotRequestPayload(byte[] bytes) {
+        ByteBuffer buffer = wrap(bytes, "InstallSnapshotRequest");
+        try {
+            long term = buffer.getLong();
+            String leaderId = readStringWithShortLength(buffer, "leaderId");
+            long lastIncludedIndex = buffer.getLong();
+            long lastIncludedTerm = buffer.getLong();
+            int dataLen = buffer.getInt();
+            if (dataLen < 0 || dataLen > buffer.remaining()) {
+                throw new IllegalArgumentException("InstallSnapshotRequest dataLen không hợp lệ: " + dataLen);
+            }
+            byte[] data = new byte[dataLen];
+            buffer.get(data);
+            ensureConsumed(buffer, "InstallSnapshotRequest");
+            return new InstallSnapshotRequest(term, leaderId, lastIncludedIndex, lastIncludedTerm, data);
+        } catch (BufferUnderflowException e) {
+            throw malformed("InstallSnapshotRequest", "payload quá ngắn", e);
+        }
+    }
+
+    public static byte[] encodeInstallSnapshotResponsePayload(InstallSnapshotResponse response) {
+        ByteBuffer buffer = ByteBuffer.allocate(8 + 1);
+        buffer.putLong(response.term());
+        buffer.put((byte) (response.success() ? 1 : 0));
+        return buffer.array();
+    }
+
+    public static InstallSnapshotResponse decodeInstallSnapshotResponsePayload(byte[] bytes) {
+        ByteBuffer buffer = wrap(bytes, "InstallSnapshotResponse");
+        try {
+            long term = buffer.getLong();
+            boolean success = readBoolean(buffer, "success");
+            ensureConsumed(buffer, "InstallSnapshotResponse");
+            return new InstallSnapshotResponse(term, success);
+        } catch (BufferUnderflowException e) {
+            throw malformed("InstallSnapshotResponse", "payload quá ngắn", e);
         }
     }
 

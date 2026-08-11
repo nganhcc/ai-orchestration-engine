@@ -18,6 +18,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-flyway")
+    implementation("org.springframework.kafka:spring-kafka")
     implementation("org.flywaydb:flyway-core:10.15.0")
     implementation("org.flywaydb:flyway-database-postgresql:10.15.0")
     runtimeOnly("org.postgresql:postgresql")
@@ -25,3 +26,8 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.mockito:mockito-core:5.6.0")
 }
+
+tasks.named<Jar>("jar") {
+    enabled = false
+}
+

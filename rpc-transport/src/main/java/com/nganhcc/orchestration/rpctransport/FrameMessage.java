@@ -19,6 +19,8 @@ public record FrameMessage(
     public static final byte RAFT_REQUEST_VOTE_RESPONSE = 0x11;
     public static final byte RAFT_APPEND_ENTRIES = 0x12;
     public static final byte RAFT_APPEND_ENTRIES_RESPONSE = 0x13;
+    public static final byte RAFT_INSTALL_SNAPSHOT = 0x14;
+    public static final byte RAFT_INSTALL_SNAPSHOT_RESPONSE = 0x15;
 
     // record tự sinh equals/hashCode dựa trên field, nhưng byte[] so sánh theo reference
     // -> override lại để test round-trip so sánh đúng nội dung, không phải địa chỉ mảng.

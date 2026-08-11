@@ -60,10 +60,12 @@ public final class RaftMessageHandler {
 
         // 3. Check log consistency tại prevLogIndex/prevLogTerm
         long termAtPrev = state.log.termAt(req.prevLogIndex());
-        if (req.prevLogIndex() > 0 && termAtPrev != req.prevLogTerm()) {
-            // không khớp (thiếu entry, hoặc entry khác term) -> reject,
-            // leader sẽ tự giảm nextIndex và retry ở lần gửi sau
-            return new AppendEntriesResponse(state.currentTerm, false, 0);
+        // Nếu prevLogIndex bằng snapshotOffset và khác 0, thì termAtPrev đã được log.termAt(index) trả về snapshotOffsetTerm,
+        // nhưng nếu prevLogIndex < snapshotOffset thì ta reject vì bị lag quá xa, cần InstallSnapshot.
+        if (req.prevLogIndex() > 0) {
+            if (req.prevLogIndex() < state.log.getSnapshotOffset() || termAtPrev != req.prevLogTerm()) {
+                return new AppendEntriesResponse(state.currentTerm, false, 0);
+            }
         }
 
         // 4. Log khớp -> ghi từng entry mới (appendOrOverwrite tự xử lý idempotent + conflict)
@@ -78,5 +80,46 @@ public final class RaftMessageHandler {
         }
 
         return new AppendEntriesResponse(state.currentTerm, true, lastNewIndex);
+    }
+
+    public static InstallSnapshotResponse handleInstallSnapshot(RaftState state, InstallSnapshotRequest req) {
+        // 1. Term cũ hơn -> reject
+        if (req.term() < state.currentTerm) {
+            return new InstallSnapshotResponse(state.currentTerm, false);
+        }
+
+        // 2. Term mới hơn -> chuyển FOLLOWER
+        if (req.term() > state.currentTerm) {
+            state.currentTerm = req.term();
+            state.votedFor = null;
+            state.nodeState = NodeState.FOLLOWER;
+            state.epoch = 0;
+        }
+
+        // 3. Đã commit snapshot này hoặc mới hơn -> success luôn (idempotent)
+        if (req.lastIncludedIndex() <= state.commitIndex) {
+            return new InstallSnapshotResponse(state.currentTerm, true);
+        }
+
+        // 4. Compact log cục bộ của follower
+        try {
+            state.log.compactUpTo(req.lastIncludedIndex(), req.lastIncludedTerm());
+        } catch (Exception e) {
+            // Trường hợp log của follower không nhất quán hoặc rỗng ở index đó, reset log hoàn toàn
+            state.log.truncateFrom(1); // Xóa hết
+            state.log.compactUpTo(req.lastIncludedIndex(), req.lastIncludedTerm());
+        }
+
+        // 5. Cập nhật các chỉ số trong state
+        state.lastSnapshotIndex = req.lastIncludedIndex();
+        state.lastSnapshotTerm = req.lastIncludedTerm();
+        if (state.commitIndex < req.lastIncludedIndex()) {
+            state.commitIndex = req.lastIncludedIndex();
+        }
+        if (state.lastApplied < req.lastIncludedIndex()) {
+            state.lastApplied = req.lastIncludedIndex();
+        }
+
+        return new InstallSnapshotResponse(state.currentTerm, true);
     }
 }
