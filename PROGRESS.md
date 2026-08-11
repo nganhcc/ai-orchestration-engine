@@ -1,3 +1,43 @@
+# Tóm tắt tiến độ — Phase 10 hoàn tất: Raft Log Persistence (PostgreSQL)
+
+## 10 — Raft Log Persistence
+
+### Trạng thái hiện tại
+
+- **Vấn đề được giải quyết**: `RaftLog` trước đây hoàn toàn in-memory — node restart mất log, phải bầu lại từ đầu, không có durability thật. Bảng `raft_log`/`raft_snapshot` đã có trong schema nhưng chưa được nối vào.
+- **Giải pháp**: Triển khai **Strategy pattern** — interface `RaftLogStore` (trong `raft-core`, mặc định `NO_OP` giữ behavior in-memory cũ) + implement `JdbcRaftLogStore` (trong `orchestrator`, dùng `JdbcTemplate` lên PostgreSQL).
+- **Ghi log**: Mọi `appendNew`/`appendOrOverwrite`/`truncateFrom`/`compactUpTo` của `RaftLog` giờ persist xuống `raft_log`/`raft_snapshot` (idempotent `ON CONFLICT DO NOTHING`).
+- **Khôi phục khi restart**: `RaftClusterBootstrap.restoreFromStore()` load snapshot meta + log từ DB trước khi node bắt đầu election/heartbeat → node giữ nguyên term/epoch/log, không bầu lại từ đầu.
+- **Snapshot**: `compactUpTo` xoá log đã compact + upsert `raft_snapshot` (data rỗng, chỉ dùng `lastIncludedIndex/Term` phục vụ fencing & compaction — phù hợp thiết kế state machine ở PostgreSQL).
+
+### File đã chạm / viết mới
+
+**`raft-core/src/main/java/com/nganhcc/orchestration/raftcore/`**
+- `RaftLogStore.java` [NEW] — interface trừu tượng hoá nơi lưu trữ durable + `SnapshotMeta` record + `NO_OP`.
+- `RaftLog.java` — thêm `nodeId`/`store` field, constructor mới `RaftLog(nodeId, store)`, gọi store trong `appendNew`/`appendOrOverwrite`/`truncateFrom`/`compactUpTo`; thêm `restoreSnapshotOffset()` để khôi phục snapshot meta khi restart (không persist lại).
+- `RaftState.java` — thêm constructor `RaftState(selfId, store)` truyền store vào `RaftLog`.
+- `RaftNode.java` — thêm constructor overload nhận `RaftLogStore`.
+
+**`orchestrator/src/main/java/com/nganhcc/orchestration/orchestrator/raft/`**
+- `JdbcRaftLogStore.java` [NEW] — implement `RaftLogStore` bằng `JdbcTemplate` (INSERT/DELETE/upsert lên `raft_log`/`raft_snapshot`).
+- `RaftClusterBootstrap.java` — inject `JdbcTemplate`, tạo `JdbcRaftLogStore`, truyền vào `RaftNode`, gọi `restoreFromStore()` trước `start()`.
+
+**Test mới**
+- `raft-core/.../RaftLogStoreTest.java` [NEW] — 7 test: append/truncate/compact persist xuống store, load khôi phục log + snapshot offset, NO_OP giữ behavior cũ.
+- `orchestrator/.../JdbcRaftLogStoreTest.java` [NEW] — 8 test mock `JdbcTemplate`: verify SQL đúng, parse rows, swallow exception.
+
+### Kiểm tra đã chạy
+
+- `./gradlew :raft-core:test` — **PASS** (gồm `RaftLogTest`, `RaftMessageHandlerTest`, `RaftLogStoreTest`).
+- `./gradlew :orchestrator:test` — **PASS** (gồm `RaftNettyClusterIntegrationTest`, `JdbcRaftLogStoreTest`).
+
+### Ghi chú / Còn mở
+
+- **Chưa persist `currentTerm`/`votedFor`**: Hiện chỉ persist log + snapshot. Khi restart, node vẫn bầu lại từ đầu về term (nhưng log được giữ). Nếu muốn giữ term/votedFor qua restart, cần thêm bảng `raft_meta` — có thể làm ở phase sau.
+- **Snapshot data = `byte[0]`**: Giữ nguyên thiết kế — state machine thật ở PostgreSQL, snapshot chỉ dùng index/term.
+
+---
+
 # Tóm tắt tiến độ — Phase 9 hoàn tất: Raft Snapshot & Log Compaction
 
 ## 9 — Raft Snapshot & Log Compaction

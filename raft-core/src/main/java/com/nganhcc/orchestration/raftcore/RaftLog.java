@@ -10,6 +10,31 @@ public final class RaftLog {
     private long snapshotOffset = 0;
     private long snapshotOffsetTerm = 0;
 
+    private final String nodeId;
+    private final RaftLogStore store;
+
+    public RaftLog() {
+        this("unknown", RaftLogStore.NO_OP);
+    }
+
+    public RaftLog(String nodeId, RaftLogStore store) {
+        this.nodeId = nodeId == null ? "unknown" : nodeId;
+        this.store = store == null ? RaftLogStore.NO_OP : store;
+    }
+
+    /**
+     * Khôi phục snapshotOffset/Term khi node restart từ store (PostgreSQL). Khác compactUpTo:
+     * method này KHÔNG đụng entries (log đã bị compact ở store) và KHÔNG gọi store.compactUpTo
+     * (snapshot đã tồn tại trong store, không cần ghi lại).
+     */
+    public synchronized void restoreSnapshotOffset(long lastIncludedIndex, long lastIncludedTerm) {
+        if (lastIncludedIndex < 0) {
+            throw new IllegalArgumentException("lastIncludedIndex phải >= 0");
+        }
+        this.snapshotOffset = lastIncludedIndex;
+        this.snapshotOffsetTerm = lastIncludedTerm;
+    }
+
     public synchronized void compactUpTo(long lastIncludedIndex, long lastIncludedTerm) {
         if (lastIncludedIndex < 0) {
             throw new IllegalArgumentException("lastIncludedIndex phải >= 0");
@@ -29,6 +54,7 @@ public final class RaftLog {
         }
         snapshotOffset = lastIncludedIndex;
         snapshotOffsetTerm = lastIncludedTerm;
+        store.compactUpTo(nodeId, lastIncludedIndex, lastIncludedTerm);
     }
 
     public synchronized long getSnapshotOffset() {
@@ -43,6 +69,7 @@ public final class RaftLog {
         long newIndex = lastIndex() + 1;
         LogEntry entry = new LogEntry(term, newIndex, command);
         entries.add(entry);
+        store.append(nodeId, entry);
         return entry;
     }
 
@@ -59,8 +86,10 @@ public final class RaftLog {
             }
             truncateFrom(entry.index()); // conflicting entry -> cắt rồi ghi đè
             entries.add(entry);
+            store.append(nodeId, entry);
         } else if (listIdx == entries.size()) {
             entries.add(entry);
+            store.append(nodeId, entry);
         } else {
             throw new IllegalStateException(
                 "Gap trong log: cố ghi index=" + entry.index()
@@ -80,6 +109,7 @@ public final class RaftLog {
         if (keepUntil < entries.size()) {
             entries.subList(keepUntil, entries.size()).clear();
         }
+        store.truncateFrom(nodeId, fromIndex);
     }
 
     public synchronized Optional<LogEntry> getEntry(long index) {

@@ -36,11 +36,15 @@ public final class RaftNode {
     private static final int SNAPSHOT_THRESHOLD = 100; // Số entries tối đa trước khi trigger snapshot tự động
 
     public RaftNode(String selfId, Set<String> peerIds, RaftTransport transport) {
-        this(selfId, peerIds, transport, RaftEventListener.noOp());
+        this(selfId, peerIds, transport, RaftEventListener.noOp(), RaftLogStore.NO_OP);
     }
 
     public RaftNode(String selfId, Set<String> peerIds, RaftTransport transport, RaftEventListener eventListener) {
-        this.state = new RaftState(selfId);
+        this(selfId, peerIds, transport, eventListener, RaftLogStore.NO_OP);
+    }
+
+    public RaftNode(String selfId, Set<String> peerIds, RaftTransport transport, RaftEventListener eventListener, RaftLogStore store) {
+        this.state = new RaftState(selfId, store);
         this.peerIds = peerIds;
         this.transport = transport;
         this.eventListener = eventListener == null ? RaftEventListener.noOp() : eventListener;
