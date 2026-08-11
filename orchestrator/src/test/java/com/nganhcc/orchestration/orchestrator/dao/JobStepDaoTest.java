@@ -34,7 +34,7 @@ class JobStepDaoTest {
         assertNotNull(fake.lastSql);
         assertTrue(fake.lastSql.contains("UPDATE job_step"));
         assertEquals(5L, fake.lastArgs[2]); // epoch param
-        assertEquals(stepId.toString(), fake.lastArgs[3]);
+        assertEquals(stepId, fake.lastArgs[3]);
     }
 
     @Test

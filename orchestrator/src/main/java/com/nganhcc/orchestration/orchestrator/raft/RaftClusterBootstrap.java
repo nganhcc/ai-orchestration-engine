@@ -10,14 +10,20 @@ import org.springframework.stereotype.Component;
 
 import java.util.Set;
 
+//khi khởi động spring sẽ gọi run method -> config raft từ env -> tạo raftnode,transport,server -> start raftnode,server -> log ra raft node đã start
+//Tạo ra 1 object raftnode, 1 object transport, 1 object server 
 @Component
-final class RaftClusterBootstrap implements ApplicationRunner, AutoCloseable {
+public final class RaftClusterBootstrap implements ApplicationRunner, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(RaftClusterBootstrap.class);
 
     private volatile RaftNode raftNode;
     private volatile RaftNettyTransport transport;
-    private volatile RaftNettyServer server;
+    private volatile RaftNettyServer server;  //lắng nghe các request từ các node khác (Vote, AppendEntries, LeadreRequest) rồi chuyển frame tới raftNode xử lí
+
+    public RaftNode raftNode() {
+        return raftNode;
+    }
 
     @Override
     public void run(ApplicationArguments args) {

@@ -23,7 +23,7 @@ class StepServiceTest {
         boolean ok = svc.markStepDone(stepId, 5L, "{}");
         assertTrue(ok);
         verify(dao).updateStatusIfEpochAtMost(stepId, 5L, "DONE", "{}");
-        verify(jdbc).update(anyString(), eq(stepId.toString()), eq("STEP_DONE_NOTIFY"), eq("{}"));
+        verify(jdbc).update(anyString(), eq(stepId), eq("STEP_DONE_NOTIFY"), eq("{}"));
     }
 
     @Test

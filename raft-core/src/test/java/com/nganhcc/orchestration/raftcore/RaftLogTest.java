@@ -167,4 +167,45 @@ class RaftLogTest {
         LogEntry gapEntry = new LogEntry(1, 3, "C".getBytes());
         assertThrows(IllegalStateException.class, () -> log.appendOrOverwrite(gapEntry));
     }
+
+    @Test
+    void testCompactUpTo() {
+        RaftLog log = new RaftLog();
+        log.appendNew(1, "cmd1".getBytes());
+        log.appendNew(1, "cmd2".getBytes());
+        log.appendNew(2, "cmd3".getBytes());
+
+        assertEquals(3, log.lastIndex());
+        assertEquals(2, log.lastTerm());
+
+        // Compact up to index 2, term 1
+        log.compactUpTo(2, 1);
+
+        assertEquals(2, log.getSnapshotOffset());
+        assertEquals(1, log.getSnapshotOffsetTerm());
+        assertEquals(1, log.size());
+        assertEquals(3, log.lastIndex());
+        assertEquals(2, log.lastTerm());
+
+        // Check index 1 and 2 are compacted
+        assertEquals(0, log.termAt(1));
+        assertEquals(1, log.termAt(2)); // snapshotOffsetTerm
+        assertEquals(2, log.termAt(3));
+
+        assertTrue(log.getEntry(1).isEmpty());
+        assertTrue(log.getEntry(2).isEmpty());
+        assertTrue(log.getEntry(3).isPresent());
+
+        // Append new entry after compact
+        log.appendNew(2, "cmd4".getBytes());
+        assertEquals(4, log.lastIndex());
+        assertEquals(2, log.termAt(4));
+
+        // Truncate from 4 should succeed
+        log.truncateFrom(4);
+        assertEquals(3, log.lastIndex());
+
+        // Truncate from index <= snapshotOffset should throw
+        assertThrows(IllegalArgumentException.class, () -> log.truncateFrom(2));
+    }
 }

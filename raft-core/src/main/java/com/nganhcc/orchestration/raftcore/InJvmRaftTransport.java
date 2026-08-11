@@ -30,4 +30,13 @@ public final class InJvmRaftTransport implements RaftTransport {
         }
         return target.onReceiveAppendEntries(req);
     }
+
+    @Override
+    public InstallSnapshotResponse sendInstallSnapshot(String targetNodeId, InstallSnapshotRequest req) {
+        RaftNode target = nodesById.get(targetNodeId);
+        if (target == null) {
+            return new InstallSnapshotResponse(0, false);
+        }
+        return target.onReceiveInstallSnapshot(req);
+    }
 }

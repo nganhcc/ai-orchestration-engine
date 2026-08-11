@@ -7,6 +7,37 @@ import java.util.Optional;
 public final class RaftLog {
 
     private final List<LogEntry> entries = new ArrayList<>();
+    private long snapshotOffset = 0;
+    private long snapshotOffsetTerm = 0;
+
+    public synchronized void compactUpTo(long lastIncludedIndex, long lastIncludedTerm) {
+        if (lastIncludedIndex < 0) {
+            throw new IllegalArgumentException("lastIncludedIndex phải >= 0");
+        }
+        if (lastIncludedIndex <= snapshotOffset) {
+            return; // Đã compact qua index này rồi
+        }
+        long listIdx = lastIncludedIndex - snapshotOffset - 1;
+        if (listIdx >= entries.size()) {
+            throw new IllegalArgumentException("Không thể compact vượt quá lastIndex: " + lastIndex());
+        }
+        int keepFrom = (int) (listIdx + 1);
+        if (keepFrom < entries.size()) {
+            entries.subList(0, keepFrom).clear();
+        } else {
+            entries.clear();
+        }
+        snapshotOffset = lastIncludedIndex;
+        snapshotOffsetTerm = lastIncludedTerm;
+    }
+
+    public synchronized long getSnapshotOffset() {
+        return snapshotOffset;
+    }
+
+    public synchronized long getSnapshotOffsetTerm() {
+        return snapshotOffsetTerm;
+    }
 
     public synchronized LogEntry appendNew(long term, byte[] command) {
         long newIndex = lastIndex() + 1;
@@ -16,9 +47,10 @@ public final class RaftLog {
     }
 
     public synchronized void appendOrOverwrite(LogEntry entry) {
-        long listIdx = entry.index() - 1;
+        long listIdx = entry.index() - snapshotOffset - 1;
         if (listIdx < 0) {
-            throw new IllegalArgumentException("index phải >= 1");
+            // Entry này đã bị compact, bỏ qua hoặc ném exception tuỳ thiết kế. Ở đây coi như đã có.
+            return;
         }
         if (listIdx < entries.size()) {
             LogEntry existing = entries.get((int) listIdx);
@@ -40,14 +72,18 @@ public final class RaftLog {
         if (fromIndex < 1) {
             throw new IllegalArgumentException("fromIndex phải >= 1");
         }
-        int keepUntil = (int) Math.min(entries.size(), fromIndex - 1);
+        if (fromIndex <= snapshotOffset) {
+            throw new IllegalArgumentException("Không thể truncate log đã bị compact up to index: " + snapshotOffset);
+        }
+        long listIdx = fromIndex - snapshotOffset - 1;
+        int keepUntil = (int) Math.min(entries.size(), listIdx);
         if (keepUntil < entries.size()) {
             entries.subList(keepUntil, entries.size()).clear();
         }
     }
 
     public synchronized Optional<LogEntry> getEntry(long index) {
-        long listIdx = index - 1;
+        long listIdx = index - snapshotOffset - 1;
         if (listIdx < 0 || listIdx >= entries.size()) {
             return Optional.empty();
         }
@@ -56,15 +92,17 @@ public final class RaftLog {
 
     public synchronized long termAt(long index) {
         if (index == 0) return 0;
+        if (index == snapshotOffset) return snapshotOffsetTerm;
+        if (index < snapshotOffset) return 0; // Đã bị compact
         return getEntry(index).map(LogEntry::term).orElse(0L);
     }
 
     public synchronized long lastIndex() {
-        return entries.isEmpty() ? 0 : entries.get(entries.size() - 1).index();
+        return entries.isEmpty() ? snapshotOffset : entries.get(entries.size() - 1).index();
     }
 
     public synchronized long lastTerm() {
-        return entries.isEmpty() ? 0 : entries.get(entries.size() - 1).term();
+        return entries.isEmpty() ? snapshotOffsetTerm : entries.get(entries.size() - 1).term();
     }
 
     public synchronized int size() {
