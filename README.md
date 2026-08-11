@@ -29,12 +29,13 @@ Hệ thống điều phối tác vụ AI phân tán (AI Job Orchestration Engine
                      └──────────────────┘
 ```
 
-Hệ thống gồm 5 modules chính:
+Hệ thống gồm 6 modules chính:
 1. **`raft-core`**: Core engine của thuật toán đồng thuận Raft (Leader Election, Log Replication, Snapshot & Compaction).
 2. **`rpc-transport`**: Giao tiếp nhị phân độ trễ thấp qua Netty TCP (được sử dụng cho nội bộ Raft consensus).
 3. **`orchestrator`**: Service trung tâm điều phối các job, quản lý đồ thị DAG, xếp lịch DRR và giao tiếp với Kafka.
 4. **`worker`**: Thực thi tác vụ AI giả lập thông qua Mock LLM Client tích hợp Circuit Breaker bảo vệ hệ thống.
 5. **`common`**: Các DTO, POJO định dạng event dùng chung.
+6. **`frontend`**: Dashboard web (React + Vite + TypeScript) trực quan hóa hệ thống — metrics, trạng thái Raft cluster, quản lý batch/DAG, giám sát worker circuit breaker và chaos demo.
 
 ---
 
@@ -91,6 +92,26 @@ Kiểm tra log vận hành của cụm Raft:
 ```bash
 docker compose logs -f orchestrator-a orchestrator-b orchestrator-c
 ```
+
+### 4. Chạy Dashboard Web (Frontend)
+
+Dashboard trực quan hóa hệ thống được xây dựng bằng **React + Vite + TypeScript** (thư mục `frontend/`). Sau khi cluster đã chạy, khởi động frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Mở trình duyệt tại **http://localhost:5173**. Dashboard gồm các trang:
+
+- **Dashboard** — metrics vận hành (batches, steps completed/reassigned/rerun) + trạng thái Raft cluster (leader, term, epoch) realtime.
+- **Batches** — tạo batch đơn giản hoặc batch DAG, xem danh sách batch.
+- **Batch Detail** — trực quan hóa DAG bằng React Flow, node đổi màu theo trạng thái step (PENDING/BLOCKED/RUNNING/DONE/FAILED) realtime.
+- **Workers** — giám sát circuit breaker (CLOSED/OPEN/HALF_OPEN) và điều khiển fault injection.
+- **Chaos Lab** — nút bấm giả lập lỗi (inject fault, kill leader, failover) kèm event log.
+
+> **Lưu ý CORS**: Frontend gọi trực tiếp tới các orchestrator (`8081/8082/8083`) và worker (`8091/8092`). Đã thêm `WebConfig` (CORS) cho phép origin `http://localhost:5173` ở cả `orchestrator` và `worker`.
 
 ---
 
