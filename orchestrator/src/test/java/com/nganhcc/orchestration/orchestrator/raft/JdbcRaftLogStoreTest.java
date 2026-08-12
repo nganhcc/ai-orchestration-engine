@@ -104,4 +104,28 @@ class JdbcRaftLogStoreTest {
         doThrow(new RuntimeException("db down")).when(jdbc).update(anyString(), any(), any(), any(), any());
         assertDoesNotThrow(() -> store.append("node-a", new LogEntry(1, 1, new byte[0])));
     }
+
+    @Test
+    void saveHardState_usesUpsertSql() {
+        store.saveHardState("node-a", new RaftLogStore.HardState(4, "node-b", 8, 7));
+
+        verify(jdbc).update(
+            contains("INSERT INTO raft_meta"),
+            eq("node-a"), eq(4L), eq("node-b"), eq(8L), eq(7L)
+        );
+    }
+
+    @Test
+    void loadHardState_parsesRow() {
+        when(jdbc.queryForList(anyString(), eq("node-a")))
+            .thenReturn(List.of(Map.of(
+                "current_term", 4L,
+                "voted_for", "node-b",
+                "commit_index", 8L,
+                "last_applied", 7L
+            )));
+
+        assertEquals(new RaftLogStore.HardState(4, "node-b", 8, 7),
+                store.loadHardState("node-a"));
+    }
 }

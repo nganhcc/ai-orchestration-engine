@@ -35,6 +35,20 @@ public final class RaftLog {
         this.snapshotOffsetTerm = lastIncludedTerm;
     }
 
+    /** Restore entries loaded from durable storage without writing them back to the store. */
+    public synchronized void restoreEntries(List<LogEntry> restoredEntries) {
+        entries.clear();
+        long expectedIndex = snapshotOffset + 1;
+        for (LogEntry entry : restoredEntries) {
+            if (entry.index() != expectedIndex) {
+                throw new IllegalArgumentException(
+                    "Log restore bị gap: expected index=" + expectedIndex + ", actual=" + entry.index());
+            }
+            entries.add(entry);
+            expectedIndex++;
+        }
+    }
+
     public synchronized void compactUpTo(long lastIncludedIndex, long lastIncludedTerm) {
         if (lastIncludedIndex < 0) {
             throw new IllegalArgumentException("lastIncludedIndex phải >= 0");
@@ -137,5 +151,17 @@ public final class RaftLog {
 
     public synchronized int size() {
         return entries.size();
+    }
+
+    public synchronized List<LogEntry> entriesFrom(long startIndex, int maxEntries) {
+        if (maxEntries <= 0 || startIndex > lastIndex()) {
+            return List.of();
+        }
+        long firstIndex = Math.max(startIndex, snapshotOffset + 1);
+        List<LogEntry> result = new ArrayList<>();
+        for (long index = firstIndex; index <= lastIndex() && result.size() < maxEntries; index++) {
+            getEntry(index).ifPresent(result::add);
+        }
+        return List.copyOf(result);
     }
 }

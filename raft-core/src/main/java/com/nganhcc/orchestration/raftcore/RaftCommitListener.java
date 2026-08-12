@@ -1,8 +1,8 @@
 package com.nganhcc.orchestration.raftcore;
 
 /**
- * Notification emitted exactly once per locally committed log entry. The listener must make
- * applying an entry idempotent because a node can restart and replay its committed log.
+ * Receives entries after they become committed locally. The command remains opaque to Raft;
+ * callers may use this hook for a state machine, while the default implementation does nothing.
  */
 @FunctionalInterface
 public interface RaftCommitListener {
