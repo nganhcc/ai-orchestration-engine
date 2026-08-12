@@ -8,7 +8,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcOperations;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
+
 
 import java.util.List;
 import java.util.Map;
@@ -23,7 +25,7 @@ public class OrchestratorController {
     private final RaftClusterBootstrap raftClusterBootstrap;
 
     @Autowired
-    public OrchestratorController(org.springframework.jdbc.core.JdbcTemplate jdbc,
+    public OrchestratorController(JdbcTemplate jdbc,
                                   @Autowired(required = false) StepMetrics stepMetrics,
                                   @Autowired(required = false) RaftClusterBootstrap raftClusterBootstrap) {
         this.jdbc = jdbc;
