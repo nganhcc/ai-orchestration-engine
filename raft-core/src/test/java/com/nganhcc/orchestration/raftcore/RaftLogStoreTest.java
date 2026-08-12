@@ -20,6 +20,7 @@ class RaftLogStoreTest {
     static final class InMemoryStore implements RaftLogStore {
         final Map<String, List<LogEntry>> logs = new ConcurrentHashMap<>();
         final Map<String, RaftLogStore.SnapshotMeta> snapshots = new ConcurrentHashMap<>();
+        final Map<String, RaftLogStore.HardState> hardStates = new ConcurrentHashMap<>();
 
         @Override
         public void append(String nodeId, LogEntry entry) {
@@ -56,6 +57,16 @@ class RaftLogStoreTest {
         @Override
         public void saveSnapshot(String nodeId, long lastIncludedIndex, long lastIncludedTerm, byte[] data) {
             snapshots.put(nodeId, new RaftLogStore.SnapshotMeta(lastIncludedIndex, lastIncludedTerm));
+        }
+
+        @Override
+        public void saveHardState(String nodeId, RaftLogStore.HardState hardState) {
+            hardStates.put(nodeId, hardState);
+        }
+
+        @Override
+        public RaftLogStore.HardState loadHardState(String nodeId) {
+            return hardStates.get(nodeId);
         }
     }
 
@@ -182,5 +193,20 @@ class RaftLogStoreTest {
         log.appendNew(1, "b".getBytes());
         assertEquals(2, log.lastIndex());
         assertEquals(1, log.termAt(1));
+    }
+
+    @Test
+    void hardState_persistsAndLoads() {
+        InMemoryStore store = new InMemoryStore();
+        RaftState state = new RaftState("node-1", store);
+        state.currentTerm = 4;
+        state.votedFor = "node-2";
+        state.commitIndex = 8;
+        state.lastApplied = 7;
+
+        state.persistHardState();
+
+        assertEquals(new RaftLogStore.HardState(4, "node-2", 8, 7),
+                store.loadHardState("node-1"));
     }
 }

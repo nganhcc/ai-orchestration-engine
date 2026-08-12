@@ -29,8 +29,19 @@ public interface RaftLogStore {
     /** Lưu (upsert) snapshot meta + data. */
     void saveSnapshot(String nodeId, long lastIncludedIndex, long lastIncludedTerm, byte[] data);
 
+    /** Persist Raft hard state associated with this node. */
+    default void saveHardState(String nodeId, HardState hardState) {
+    }
+
+    /** Load Raft hard state, or null when this node has never persisted one. */
+    default HardState loadHardState(String nodeId) {
+        return null;
+    }
+
     /** Meta thông tin của 1 snapshot. */
     record SnapshotMeta(long lastIncludedIndex, long lastIncludedTerm) {}
+
+    record HardState(long currentTerm, String votedFor, long commitIndex, long lastApplied) {}
 
     RaftLogStore NO_OP = new RaftLogStore() {
         @Override public void append(String nodeId, LogEntry entry) {}

@@ -1,3 +1,23 @@
+# Tóm tắt tiến độ — Phase 11 hoàn tất: Durable Raft Command Log
+
+## 11 — Raft command append/replication/persistence
+
+### Trạng thái hiện tại
+
+- `RaftNode.propose(byte[])` đã append command opaque vào leader log và chờ majority replication.
+- `AppendEntries` giờ gửi các entry còn thiếu theo `nextIndex`, follower catch-up/conflict overwrite đúng và mỗi bản ghi được persist qua `RaftLogStore`.
+- Leader advance `commitIndex` khi đạt quorum; commit listener mặc định là no-op để Raft không can thiệp business state.
+- Thêm `raft_meta` để persist/restore `currentTerm`, `votedFor`, `commitIndex`, `lastApplied`.
+- Restore log dùng API không ghi ngược lại database, sau đó khôi phục hard state trước khi election bắt đầu.
+- Business writes, Kafka flow và PostgreSQL business tables không thay đổi.
+
+### Kiểm tra
+
+- `./gradlew :raft-core:test` — PASS.
+- `./gradlew :orchestrator:test` — PASS.
+
+---
+
 # Tóm tắt tiến độ — Phase 10 hoàn tất: Raft Log Persistence (PostgreSQL)
 
 ## 10 — Raft Log Persistence

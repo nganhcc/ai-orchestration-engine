@@ -108,4 +108,48 @@ public final class JdbcRaftLogStore implements RaftLogStore {
             log.warn("raft.snapshot.save.failed nodeId={} index={} err={}", nodeId, lastIncludedIndex, e.getMessage());
         }
     }
+
+    @Override
+    public void saveHardState(String nodeId, HardState hardState) {
+        try {
+            jdbc.update(
+                "INSERT INTO raft_meta(node_id, current_term, voted_for, commit_index, last_applied) " +
+                    "VALUES (?, ?, ?, ?, ?) " +
+                    "ON CONFLICT (node_id) DO UPDATE SET " +
+                    "current_term = EXCLUDED.current_term, " +
+                    "voted_for = EXCLUDED.voted_for, " +
+                    "commit_index = EXCLUDED.commit_index, " +
+                    "last_applied = EXCLUDED.last_applied, updated_at = now()",
+                nodeId,
+                hardState.currentTerm(),
+                hardState.votedFor(),
+                hardState.commitIndex(),
+                hardState.lastApplied()
+            );
+        } catch (Exception e) {
+            log.warn("raft.meta.save.failed nodeId={} err={}", nodeId, e.getMessage());
+        }
+    }
+
+    @Override
+    public HardState loadHardState(String nodeId) {
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT current_term, voted_for, commit_index, last_applied " +
+                    "FROM raft_meta WHERE node_id = ?", nodeId);
+            if (rows.isEmpty()) {
+                return null;
+            }
+            Map<String, Object> row = rows.get(0);
+            return new HardState(
+                ((Number) row.get("current_term")).longValue(),
+                (String) row.get("voted_for"),
+                ((Number) row.get("commit_index")).longValue(),
+                ((Number) row.get("last_applied")).longValue()
+            );
+        } catch (Exception e) {
+            log.warn("raft.meta.load.failed nodeId={} err={}", nodeId, e.getMessage());
+            return null;
+        }
+    }
 }

@@ -10,6 +10,7 @@ public final class RaftState {
     public String votedFor = null;
 
     public final RaftLog log;
+    private final RaftLogStore store;
 
     public long commitIndex = 0;
     public long lastApplied = 0;
@@ -22,6 +23,11 @@ public final class RaftState {
 
     public RaftState(String selfId, RaftLogStore store) {
         this.selfId = selfId;
-        this.log = new RaftLog(selfId, store);
+        this.store = store == null ? RaftLogStore.NO_OP : store;
+        this.log = new RaftLog(selfId, this.store);
+    }
+
+    public void persistHardState() {
+        store.saveHardState(selfId, new RaftLogStore.HardState(currentTerm, votedFor, commitIndex, lastApplied));
     }
 }

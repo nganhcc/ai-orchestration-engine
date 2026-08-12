@@ -88,13 +88,31 @@ public final class RaftClusterBootstrap implements ApplicationRunner, AutoClosea
                     nodeId, snapshot.lastIncludedIndex(), snapshot.lastIncludedTerm());
         }
         List<LogEntry> entries = store.load(nodeId);
-        for (LogEntry entry : entries) {
-            raftNode.state().log.appendOrOverwrite(entry);
-        }
+        raftNode.state().log.restoreEntries(entries);
         if (!entries.isEmpty()) {
             log.info("raft.restore.log nodeId={} restoredEntries={} lastIndex={} lastTerm={}",
                     nodeId, entries.size(), raftNode.state().log.lastIndex(), raftNode.state().log.lastTerm());
         }
+
+        RaftLogStore.HardState hardState = store.loadHardState(nodeId);
+        if (hardState != null) {
+            raftNode.state().currentTerm = Math.max(0, hardState.currentTerm());
+            raftNode.state().votedFor = hardState.votedFor();
+            long lastIndex = raftNode.state().log.lastIndex();
+            long snapshotIndex = raftNode.state().log.getSnapshotOffset();
+            raftNode.state().commitIndex = clampIndex(hardState.commitIndex(), snapshotIndex, lastIndex);
+            raftNode.state().lastApplied = clampIndex(hardState.lastApplied(), snapshotIndex, lastIndex);
+            log.info("raft.restore.meta nodeId={} term={} votedFor={} commitIndex={} lastApplied={}",
+                    nodeId,
+                    raftNode.state().currentTerm,
+                    raftNode.state().votedFor,
+                    raftNode.state().commitIndex,
+                    raftNode.state().lastApplied);
+        }
+    }
+
+    private long clampIndex(long value, long minimum, long maximum) {
+        return Math.max(minimum, Math.min(value, maximum));
     }
 
     @PreDestroy
